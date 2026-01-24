@@ -1,0 +1,71 @@
+:root {
+  color-scheme: only light;
+  --pink-900: #14030c;
+  --pink-800: #230416;
+  --pink-700: #3a0725;
+  --pink-500: #ff2f92;
+  --pink-400: #ff67b3;
+  --pink-200: #ffd4e8;
+  --cyan-300: #7fe8ff;
+  --violet-300: #b089ff;
+  --ink: #fbe6f2;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: radial-gradient(circle at 20% 10%, #3a0725, #180310 45%, #070106 100%);
+  font-family: "Avenir Next", "Futura", "Gill Sans", "Trebuchet MS", sans-serif;
+  color: var(--ink);
+}
+
+body {
+  position: relative;
+}
+
+#stage {
+  width: 100vw;
+  height: 100vh;
+  display: block;
+}
+
+.hud {
+  position: absolute;
+  top: 20px;
+  left: 24px;
+  padding: 12px 14px;
+  background: rgba(12, 3, 8, 0.6);
+  border: 1px solid rgba(255, 103, 179, 0.2);
+  border-radius: 14px;
+  backdrop-filter: blur(6px);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.hud-title {
+  font-size: 12px;
+  opacity: 0.7;
+  margin-bottom: 6px;
+}
+
+.hud-row {
+  font-size: 12px;
+  margin: 2px 0;
+  display: flex;
+  gap: 6px;
+}
+
+@media (max-width: 720px) {
+  .hud {
+    left: 16px;
+    top: 16px;
+  }
+}
