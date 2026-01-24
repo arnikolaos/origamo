@@ -4,6 +4,7 @@ const ctx = canvas.getContext("2d");
 const modeLabel = document.getElementById("modeLabel");
 const pointsLabel = document.getElementById("pointsLabel");
 const signalLabel = document.getElementById("signalLabel");
+const volumeControl = document.getElementById("volumeControl");
 
 const TAU = Math.PI * 2;
 const SUBTLETY = 0.55;
@@ -30,6 +31,13 @@ const state = {
   calm: 0,
   mood: 0,
   phaseBloom: 0,
+  loopSettle: 0,
+  lastTouch: { index: -1, t: 0 },
+  lastWhisper: 0,
+  fastHold: 0,
+  excited: 0,
+  prevExcited: 0,
+  lastFlare: 0,
 };
 
 const trace = [];
@@ -39,6 +47,9 @@ const sparkles = [];
 const seeds = [];
 const memories = [];
 const maxMemories = 3;
+const edgeWhispers = [];
+const emissionWaves = [];
+const portalWraps = [];
 
 let width = 0;
 let height = 0;
@@ -48,6 +59,8 @@ let speed = 90;
 
 const shapePoints = [];
 const pointTargets = [];
+const pointAge = [];
+const pointWobble = [];
 
 const turtle = {
   position: { x: 0, y: 0 },
@@ -58,6 +71,7 @@ const turtle = {
 
 let audioCtx = null;
 let masterGain = null;
+let pendingVolume = Number(volumeControl.value);
 
 function resize() {
   width = window.innerWidth;
@@ -81,6 +95,8 @@ function resize() {
         y: center.y + Math.sin(angle) * radius,
       });
       pointTargets.push(null);
+      pointAge.push(999);
+      pointWobble.push({ x: 0, y: 0, t: 0 });
     }
   }
 }
@@ -123,6 +139,10 @@ function polygonAngles(points) {
     const v2 = { x: next.x - curr.x, y: next.y - curr.y };
     const dot = v1.x * v2.x + v1.y * v2.y;
     const mag = Math.hypot(v1.x, v1.y) * Math.hypot(v2.x, v2.y);
+    if (mag < 1e-6) {
+      angles.push(60);
+      continue;
+    }
     const angle = Math.acos(clamp(dot / mag, -1, 1)) * (180 / Math.PI);
     angles.push(angle);
   }
@@ -176,7 +196,7 @@ function ensureAudio() {
   if (!AudioContext) return;
   audioCtx = new AudioContext();
   masterGain = audioCtx.createGain();
-  masterGain.gain.value = 0.03;
+  masterGain.gain.value = pendingVolume * 0.1;
   masterGain.connect(audioCtx.destination);
 }
 
@@ -201,6 +221,9 @@ function playPulse(angle) {
     partials = [1];
   } else if (state.symmetry > 0.9) {
     partials = [1, 1.2, 1.333, 1.5, 1.8];
+  }
+  if (state.excited > 0.6) {
+    partials = partials.concat([2.6]);
   }
   const gain = audioCtx.createGain();
   const filter = audioCtx.createBiquadFilter();
@@ -257,6 +280,22 @@ function updateTurtle(delta, angles, lengths) {
     turtle.stepIndex = (turtle.stepIndex + 1) % angles.length;
     return currentAngle;
   }
+  if (turtle.position.x < 0) {
+    portalWraps.push({ x: 0, y: turtle.position.y, t: state.now, radius: 8 });
+    turtle.position.x = width;
+  }
+  if (turtle.position.x > width) {
+    portalWraps.push({ x: width, y: turtle.position.y, t: state.now, radius: 8 });
+    turtle.position.x = 0;
+  }
+  if (turtle.position.y < 0) {
+    portalWraps.push({ x: turtle.position.x, y: 0, t: state.now, radius: 8 });
+    turtle.position.y = height;
+  }
+  if (turtle.position.y > height) {
+    portalWraps.push({ x: turtle.position.x, y: height, t: state.now, radius: 8 });
+    turtle.position.y = 0;
+  }
   return null;
 }
 
@@ -278,14 +317,16 @@ function clear(t) {
 
 function drawTrace(now) {
   ctx.save();
-  ctx.lineWidth = 2.4 + state.calm * 1.5 * SUBTLETY;
+  ctx.lineWidth = 2.4 + (state.calm * 1.5 + state.loopSettle * 1.2) * SUBTLETY;
   ctx.lineCap = "round";
-  const hue = 330;
-  const saturation = 80 + state.mood * 10;
-  const lightness = 58 + state.mood * 8;
+    const hue = 330;
+    const saturation = 80 + state.mood * 10 + state.excited * 6;
+    const lightness = 58 + state.mood * 8 + state.excited * 6;
   for (let i = 1; i < trace.length; i += 1) {
     const prev = trace[i - 1];
     const current = trace[i];
+    const jump = Math.hypot(current.x - prev.x, current.y - prev.y);
+    if (jump > Math.min(width, height) * 0.6) continue;
     const age = (now - current.t) / 1000;
     const alpha = Math.max(0, 1 - age / 6);
     if (alpha <= 0) continue;
@@ -307,6 +348,15 @@ function drawTrace(now) {
       ctx.beginPath();
       ctx.moveTo(prev.x + nx * offset, prev.y + ny * offset);
       ctx.lineTo(current.x + nx * offset, current.y + ny * offset);
+      ctx.stroke();
+    }
+    if (state.excited > 0.15) {
+      const glowAlpha = Math.min(0.35, state.excited * 0.35);
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = `rgba(120, 205, 255, ${alpha * glowAlpha})`;
+      ctx.beginPath();
+      ctx.moveTo(prev.x, prev.y);
+      ctx.lineTo(current.x, current.y);
       ctx.stroke();
     }
   }
@@ -431,6 +481,19 @@ function drawShapeField(now) {
     });
   }
 
+  if (state.lastTouch.index >= 0) {
+    const age = (now - state.lastTouch.t) / 1000;
+    if (age < 1.1) {
+      const point = shapePoints[state.lastTouch.index];
+      const alpha = (1 - age / 1.1) * 0.35 * SUBTLETY;
+      ctx.strokeStyle = `rgba(255, 213, 232, ${alpha})`;
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, 16, 0, TAU);
+      ctx.stroke();
+    }
+  }
+
   shapePoints.forEach((point, index) => {
     const pulse = Math.sin(now * 0.002 + index) * 2;
     ctx.beginPath();
@@ -526,6 +589,71 @@ function drawSeeds(now) {
   ctx.restore();
 }
 
+function drawEdgeWhispers(now) {
+  ctx.save();
+  edgeWhispers.forEach((whisper) => {
+    const age = (now - whisper.t) / 1000;
+    const progress = age / 1.1;
+    if (progress >= 1) return;
+    const alpha = (1 - progress) * 0.22 * SUBTLETY;
+    ctx.fillStyle = `rgba(255, 213, 232, ${alpha})`;
+    ctx.beginPath();
+    ctx.arc(whisper.x, whisper.y, 2.4, 0, TAU);
+    ctx.fill();
+  });
+  ctx.restore();
+}
+
+function drawQuietOrbit(now) {
+  if (state.calm < 0.75) return;
+  const centroid = polygonCentroid(shapePoints);
+  const radius = baseStep * 0.35;
+  const angle = now * 0.0006;
+  const x = centroid.x + Math.cos(angle) * radius;
+  const y = centroid.y + Math.sin(angle) * radius;
+  ctx.save();
+  ctx.fillStyle = `rgba(255, 213, 232, ${0.25 * SUBTLETY})`;
+  ctx.beginPath();
+  ctx.arc(x, y, 2, 0, TAU);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawEmissionWaves(now) {
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  emissionWaves.forEach((wave) => {
+    const age = (now - wave.t) / 1000;
+    const progress = age / 1.1;
+    if (progress >= 1) return;
+    const alpha = (1 - progress) * 0.65 * SUBTLETY;
+    const radius = wave.radius + progress * wave.radius * 3;
+    ctx.strokeStyle = `rgba(120, 205, 255, ${alpha})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(wave.x, wave.y, radius, 0, TAU);
+    ctx.stroke();
+  });
+  ctx.restore();
+}
+
+function drawWrapPortals(now) {
+  ctx.save();
+  portalWraps.forEach((portal) => {
+    const age = (now - portal.t) / 1000;
+    const progress = age / 1.1;
+    if (progress >= 1) return;
+    const alpha = (1 - progress) * 0.2 * SUBTLETY;
+    const radius = portal.radius + progress * portal.radius * 1.6;
+    ctx.strokeStyle = `rgba(255, 213, 232, ${alpha})`;
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    ctx.arc(portal.x, portal.y, radius, 0, TAU);
+    ctx.stroke();
+  });
+  ctx.restore();
+}
+
 function updateHUD() {
   modeLabel.textContent = "shape";
   pointsLabel.textContent = shapePoints.length;
@@ -588,7 +716,13 @@ function applySoftConstraints(delta) {
   const angleDiff = Math.max(...angles.map((angle) => Math.abs(angle - avgAngle))) / avgAngle;
   const coherence = clamp(1 - (edgeDiff + angleDiff) * 0.5, 0, 1);
   if (coherence < 0.45) return;
-  const strength = ((coherence - 0.45) / 0.55) * delta * 0.6 * SUBTLETY;
+  const dragActive = state.dragging && state.dragging.type === "point";
+  const settleFade = dragActive ? clamp(1 - coherence, 0.7, 1) : clamp(1 - coherence, 0.5, 1);
+  const holdFade = state.symmetryHold > 1.2 ? clamp(1 - (state.symmetryHold - 1.2) / 0.8, 0.35, 1) : 1;
+  const dragBoost = state.dragging && state.dragging.type === "point"
+    ? (coherence > 0.85 ? 1.6 : 1.35)
+    : 1;
+  const strength = ((coherence - 0.45) / 0.55) * delta * 0.22 * SUBTLETY * settleFade * holdFade * dragBoost;
   const centroid = polygonCentroid(shapePoints);
   const baseAngle = Math.atan2(shapePoints[0].y - centroid.y, shapePoints[0].x - centroid.x);
   const radius = shapePoints.reduce((sum, point) => sum + distance(point, centroid), 0) / shapePoints.length;
@@ -605,27 +739,35 @@ function applySoftConstraints(delta) {
 }
 
 function applyPointInertia(delta) {
-  const ease = 1 - Math.exp(-10 * delta);
+  const dragActive = state.dragging && state.dragging.type === "point";
+  const stiffness = dragActive ? 28 : 18;
+  const damping = dragActive ? 0.78 : 0.85;
   shapePoints.forEach((point, index) => {
     const target = pointTargets[index];
-    if (!target) return;
-    point.x += (target.x - point.x) * ease * SUBTLETY;
-    point.y += (target.y - point.y) * ease * SUBTLETY;
-    if (distance(point, target) < 0.5) {
-      pointTargets[index] = null;
+    if (target) {
+      const ease = (1 - Math.exp(-10 * delta)) * (dragActive ? 0.85 : 1);
+      point.x += (target.x - point.x) * ease * SUBTLETY;
+      point.y += (target.y - point.y) * ease * SUBTLETY;
+      if (distance(point, target) < 0.5) {
+        pointTargets[index] = null;
+      }
+    }
+    const wobble = pointWobble[index];
+    if (wobble && state.now - wobble.t < 700) {
+      const age = (state.now - wobble.t) / 1000;
+      const decay = Math.exp(-5 * age);
+      const osc = Math.sin(age * 10);
+      point.x += wobble.x * decay * osc;
+      point.y += wobble.y * decay * osc;
     }
   });
 }
 
 function applyBreath(delta) {
   const target = state.breathing ? 1 : 0;
-  const rate = state.breathing ? 0.7 : 0.35;
+  const rate = state.breathing ? 0.8 : 0.5;
   state.breath = clamp(state.breath + (target ? rate : -rate) * delta, 0, 1);
-  const scale = 1 + state.breath * 0.06;
-  if (!state.breathing) {
-    state.breathScale = scale;
-    return;
-  }
+  const scale = 1 + state.breath * 0.075;
   const ratio = scale / state.breathScale;
   if (Math.abs(ratio - 1) < 0.0001) return;
   const centroid = polygonCentroid(shapePoints);
@@ -638,20 +780,31 @@ function applyBreath(delta) {
 
 function applyBalanceField(delta) {
   if (shapePoints.length < 3) return;
-  if (state.dragging && state.dragging.type === "point") return;
+  const dragActive = state.dragging && state.dragging.type === "point";
+  const dragBoost = dragActive ? (state.symmetry > 0.85 ? 1.4 : 1.2) : 1;
   const edges = polygonEdgeLengths(shapePoints);
   const avgEdge = edges.reduce((sum, len) => sum + len, 0) / edges.length;
   shapePoints.forEach((point, index) => {
     const prev = shapePoints[(index - 1 + shapePoints.length) % shapePoints.length];
     const next = shapePoints[(index + 1) % shapePoints.length];
-    const prevLen = edges[(index - 1 + edges.length) % edges.length];
-    const nextLen = edges[index];
-    const diff = Math.abs(prevLen - nextLen) / avgEdge;
+    const prevLen = edges[(index - 1 + edges.length) % edges.length] || 0;
+    const nextLen = edges[index] || 0;
+    const diff = avgEdge > 0 ? Math.abs(prevLen - nextLen) / avgEdge : 0;
     if (diff > 0.08) return;
     const midpoint = { x: (prev.x + next.x) * 0.5, y: (prev.y + next.y) * 0.5 };
-    const strength = (0.08 - diff) * delta * 0.25 * SUBTLETY;
+    const settleFade = dragActive ? clamp(1 - state.symmetry, 0.7, 1) : clamp(1 - state.symmetry, 0.5, 1);
+    const holdFade = state.symmetryHold > 1.2 ? clamp(1 - (state.symmetryHold - 1.2) / 0.8, 0.35, 1) : 1;
+    const recentTouch = state.lastTouch.index === index && state.now - state.lastTouch.t < 1200;
+    const ageBoost = pointAge[index] > 1.5 ? 1.4 : 1.12;
+    const releaseBoost = !dragActive && recentTouch ? ageBoost : 1;
+    const strength = (0.08 - diff) * delta * 0.36 * SUBTLETY * settleFade * holdFade * dragBoost * releaseBoost;
     point.x += (midpoint.x - point.x) * strength;
     point.y += (midpoint.y - point.y) * strength;
+
+    if (state.symmetry > 0.85 && diff < 0.04 && state.now - state.lastWhisper > 320) {
+      edgeWhispers.push({ x: midpoint.x, y: midpoint.y, t: state.now });
+      state.lastWhisper = state.now;
+    }
   });
 }
 
@@ -671,7 +824,7 @@ function updateProgram(delta) {
     state.symmetryHold = Math.max(0, state.symmetryHold - delta * 0.6);
   }
 
-  const calmSpeed = 1 - state.calm * 0.45 * SUBTLETY;
+  const calmSpeed = 1 - (state.calm * 0.65 + state.loopSettle * 0.45) * SUBTLETY;
   const steppedAngle = updateTurtle(delta * calmSpeed, angles, lengths);
   trace.push({ x: turtle.position.x, y: turtle.position.y, t: state.now });
   while (trace.length > maxTrace) trace.shift();
@@ -681,6 +834,7 @@ function updateProgram(delta) {
     const point = trace[i];
     if (distance(point, turtle.position) < baseStep * 0.6 && state.now - state.lastBurst > 1800) {
       bursts.push({ x: turtle.position.x, y: turtle.position.y, t: state.now, radius: baseStep * 0.4 });
+      state.loopSettle = 1;
       for (let i = 0; i < 6; i += 1) {
         sparkles.push({
           x: turtle.position.x,
@@ -729,6 +883,25 @@ function updateSurprises(delta) {
   state.dragEnergy = Math.max(0, state.dragEnergy - delta * 0.8);
   state.calm = clamp(state.calm + (state.dragEnergy < 0.15 ? delta : -delta * 2), 0, 1);
   state.phaseBloom = Math.max(0, state.phaseBloom - delta * 0.8);
+  state.loopSettle = Math.max(0, state.loopSettle - delta * 0.4);
+  if (state.dragEnergy > 0.85) {
+    state.fastHold = Math.min(0.6, state.fastHold + delta);
+  } else {
+    state.fastHold = Math.max(0, state.fastHold - delta * 0.6);
+  }
+
+  const exciteTarget = state.dragEnergy > 0.6 ? 1 : 0;
+  state.excited = clamp(state.excited + (exciteTarget ? delta * 1.2 : -delta * 0.8), 0, 1);
+  if (state.prevExcited > 0.5 && state.excited <= 0.5 && state.dragEnergy < 0.4 && state.now - state.lastFlare > 350) {
+    emissionWaves.push({
+      x: turtle.position.x,
+      y: turtle.position.y,
+      t: state.now,
+      radius: baseStep * 0.7,
+    });
+    state.lastFlare = state.now;
+  }
+  state.prevExcited = state.excited;
 
   for (let i = bursts.length - 1; i >= 0; i -= 1) {
     if (state.now - bursts[i].t > 1400) bursts.splice(i, 1);
@@ -741,6 +914,21 @@ function updateSurprises(delta) {
 
   for (let i = sparkles.length - 1; i >= 0; i -= 1) {
     if (state.now - sparkles[i].t > 700) sparkles.splice(i, 1);
+  }
+
+  for (let i = edgeWhispers.length - 1; i >= 0; i -= 1) {
+    if (state.now - edgeWhispers[i].t > 1200) edgeWhispers.splice(i, 1);
+  }
+
+  for (let i = emissionWaves.length - 1; i >= 0; i -= 1) {
+    if (state.now - emissionWaves[i].t > 1200) emissionWaves.splice(i, 1);
+  }
+  for (let i = portalWraps.length - 1; i >= 0; i -= 1) {
+    if (state.now - portalWraps[i].t > 1200) portalWraps.splice(i, 1);
+  }
+
+  for (let i = 0; i < pointAge.length; i += 1) {
+    pointAge[i] += delta;
   }
 
   if (state.portal && (state.now - state.portal.t) / 1000 > state.portal.life) {
@@ -775,8 +963,12 @@ function animate(now) {
   drawBloom(state.detected, state.bloom);
   drawGhostPolygon(state.detected, state.bloom);
   drawBursts(now);
+  drawEdgeWhispers(now);
   drawPortal(now);
   drawSeeds(now);
+  drawQuietOrbit(now);
+  drawEmissionWaves(now);
+  drawWrapPortals(now);
   drawShapeField(now);
   drawAngleEchoes(state.lastAngles);
   drawSymmetryHalo(state.symmetry);
@@ -815,6 +1007,13 @@ canvas.addEventListener("pointerdown", (event) => {
   };
 });
 
+volumeControl.addEventListener("input", (event) => {
+  pendingVolume = Number(event.target.value);
+  if (masterGain) {
+    masterGain.gain.value = pendingVolume * 0.1;
+  }
+});
+
 canvas.addEventListener("pointermove", (event) => {
   const position = { x: event.clientX, y: event.clientY };
 
@@ -824,6 +1023,7 @@ canvas.addEventListener("pointermove", (event) => {
     const dx = position.x - state.dragging.last.x;
     const dy = position.y - state.dragging.last.y;
     const speed = Math.hypot(dx, dy);
+    state.dragging.lastDelta = { x: dx, y: dy };
     state.dragEnergy = Math.max(state.dragEnergy, clamp(speed / 40, 0, 1));
     if (speed > 18) {
       state.sweep.strength = Math.min(2, state.sweep.strength + speed * 0.01);
@@ -838,8 +1038,14 @@ canvas.addEventListener("pointermove", (event) => {
   state.dragging.last = position;
 
   if (state.dragging.type === "point") {
-    pointTargets[state.dragging.index] = { x: position.x, y: position.y };
+    const margin = 24;
+    const bounded = {
+      x: clamp(position.x, margin, width - margin),
+      y: clamp(position.y, margin, height - margin),
+    };
+    pointTargets[state.dragging.index] = bounded;
     state.breathing = false;
+    state.lastTouch = { index: state.dragging.index, t: state.now };
   } else if (state.dragging.type === "rotate") {
     const dx = position.x - state.dragging.origin.x;
     state.rotation = state.dragging.start + dx * 0.002;
@@ -853,6 +1059,17 @@ canvas.addEventListener("pointerup", (event) => {
   if (state.dragging && state.dragging.type === "point") {
     pushMemory();
     pointTargets[state.dragging.index] = null;
+    state.lastTouch = { index: state.dragging.index, t: state.now };
+    if (pointAge[state.dragging.index] > 1.5) {
+      const delta = state.dragging.lastDelta || { x: 0, y: 0 };
+      pointWobble[state.dragging.index] = {
+        x: delta.x * 0.9,
+        y: delta.y * 0.9,
+        t: state.now,
+      };
+    } else {
+      pointWobble[state.dragging.index] = { x: 0, y: 0, t: 0 };
+    }
   }
   if (state.dragging && state.dragging.type === "rotate") {
     const moved = distance(state.dragging.origin, state.dragging.last || state.dragging.origin);
@@ -875,8 +1092,15 @@ canvas.addEventListener("dblclick", (event) => {
   const position = { x: event.clientX, y: event.clientY };
   const { index, dist } = closestEdge(position, shapePoints);
   if (dist < 40) {
-    shapePoints.splice(index, 0, { x: position.x, y: position.y });
+    const margin = 24;
+    const bounded = {
+      x: clamp(position.x, margin, width - margin),
+      y: clamp(position.y, margin, height - margin),
+    };
+    shapePoints.splice(index, 0, bounded);
     pointTargets.splice(index, 0, null);
+    pointAge.splice(index, 0, 0);
+    pointWobble.splice(index, 0, { x: 0, y: 0, t: 0 });
     state.phaseBloom = 1;
   }
 });
@@ -890,6 +1114,11 @@ canvas.addEventListener("contextmenu", (event) => {
     if (idx >= 0) {
       shapePoints.splice(idx, 1);
       pointTargets.splice(idx, 1);
+      pointAge.splice(idx, 1);
+      pointWobble.splice(idx, 1);
+      if (state.lastTouch.index === idx) {
+        state.lastTouch = { index: -1, t: 0 };
+      }
     }
   }
 });
