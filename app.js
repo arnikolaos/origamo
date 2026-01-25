@@ -38,6 +38,7 @@ const state = {
   excited: 0,
   prevExcited: 0,
   lastFlare: 0,
+  tapPending: null,
 };
 
 const trace = [];
@@ -1118,13 +1119,48 @@ canvas.addEventListener("pointerup", (event) => {
   if (state.dragging && state.dragging.type === "rotate") {
     const moved = distance(state.dragging.origin, state.dragging.last || state.dragging.origin);
     if (moved < 6 && !wasBreathing) {
-      seeds.push({
-        x: event.clientX,
-        y: event.clientY,
-        t: state.now,
-        duration: 2.6,
-        radius: 10,
-      });
+      if (event.pointerType === "touch") {
+        const now = state.now;
+        const tap = state.tapPending;
+        const sameSpot = tap && distance({ x: tap.x, y: tap.y }, { x: event.clientX, y: event.clientY }) < 25;
+        if (tap && now - tap.t < 320 && sameSpot) {
+          window.clearTimeout(tap.timer);
+          state.tapPending = null;
+          const { index, dist } = closestEdge({ x: event.clientX, y: event.clientY }, shapePoints);
+          if (dist < 40) {
+            const margin = 24;
+            const bounded = {
+              x: clamp(event.clientX, margin, width - margin),
+              y: clamp(event.clientY, margin, height - margin),
+            };
+            shapePoints.splice(index, 0, bounded);
+            pointTargets.splice(index, 0, null);
+            pointAge.splice(index, 0, 0);
+            pointWobble.splice(index, 0, { x: 0, y: 0, t: 0 });
+            state.phaseBloom = 1;
+          }
+        } else {
+          const timer = window.setTimeout(() => {
+            seeds.push({
+              x: event.clientX,
+              y: event.clientY,
+              t: state.now,
+              duration: 2.6,
+              radius: 10,
+            });
+            state.tapPending = null;
+          }, 320);
+          state.tapPending = { t: now, x: event.clientX, y: event.clientY, timer };
+        }
+      } else {
+        seeds.push({
+          x: event.clientX,
+          y: event.clientY,
+          t: state.now,
+          duration: 2.6,
+          radius: 10,
+        });
+      }
     } else {
       pushMemory();
     }
