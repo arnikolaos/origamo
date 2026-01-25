@@ -992,7 +992,20 @@ canvas.addEventListener("pointerdown", (event) => {
 
   const idx = pickPoint(position, shapePoints);
   if (idx >= 0) {
-    state.dragging = { type: "point", index: idx, last: position };
+    state.dragging = { type: "point", index: idx, last: position, moved: false };
+    state.dragging.holdTimer = window.setTimeout(() => {
+      if (!state.dragging || state.dragging.type !== "point") return;
+      if (state.dragging.moved) return;
+      if (shapePoints.length <= 3) return;
+      shapePoints.splice(idx, 1);
+      pointTargets.splice(idx, 1);
+      pointAge.splice(idx, 1);
+      pointWobble.splice(idx, 1);
+      if (state.lastTouch.index === idx) {
+        state.lastTouch = { index: -1, t: 0 };
+      }
+      state.dragging = null;
+    }, 650);
     return;
   }
 
@@ -1024,6 +1037,13 @@ canvas.addEventListener("pointermove", (event) => {
     const dy = position.y - state.dragging.last.y;
     const speed = Math.hypot(dx, dy);
     state.dragging.lastDelta = { x: dx, y: dy };
+    if (state.dragging.type === "point" && speed > 6) {
+      state.dragging.moved = true;
+      if (state.dragging.holdTimer) {
+        window.clearTimeout(state.dragging.holdTimer);
+        state.dragging.holdTimer = null;
+      }
+    }
     state.dragEnergy = Math.max(state.dragEnergy, clamp(speed / 40, 0, 1));
     if (speed > 18) {
       state.sweep.strength = Math.min(2, state.sweep.strength + speed * 0.01);
@@ -1056,6 +1076,9 @@ canvas.addEventListener("pointerup", (event) => {
   canvas.releasePointerCapture(event.pointerId);
   const wasBreathing = state.dragging && state.dragging.isBreath;
   state.breathing = false;
+  if (state.dragging && state.dragging.holdTimer) {
+    window.clearTimeout(state.dragging.holdTimer);
+  }
   if (state.dragging && state.dragging.type === "point") {
     pushMemory();
     pointTargets[state.dragging.index] = null;
