@@ -14,3 +14,6 @@
 - Adjusted emission to trigger on cooling threshold for a cleaner "energy release" cue.
 - Added edge wrap portals for tracer wrap-around and removed debug HUD.
 - Added edge-wrap glow rings and cleanup for wrap portal effects.
+- Added mobile long-press delete and double-tap add-point handling.
+- Added wrap-around portal rings at screen edges.
+- Strengthened touch event prevention to block iOS selection popups.
