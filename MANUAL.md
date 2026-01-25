@@ -10,8 +10,10 @@ The shape you edit is not the drawn path; it drives the tracing machine.
 
 ## Core Interactions
 - Drag a vertex to reshape the polygon.
-- Double-click an edge to insert a new point.
-- Right-click a vertex to remove it (minimum 3 points).
+- Double-click an edge to insert a new point (desktop).
+- Double-tap an edge to insert a new point (mobile).
+- Right-click a vertex to remove it (minimum 3 points, desktop).
+- Long-press a vertex to remove it (mobile).
 - Drag empty space to rotate the whole program.
 - Click and hold empty space (no drag) to "breathe" the shape.
 - Single click empty space to drop a morph seed.
@@ -40,6 +42,7 @@ The shape you edit is not the drawn path; it drives the tracing machine.
 - Quiet orbit: a tiny dot orbits the centroid when calm.
 - Morph seed: a soft ring that gently attracts the nearest vertex.
 - Portal: after sustained symmetry, a faint ring bends the trace slightly.
+- Wrap portals: the tracer reappears on the opposite edge with a faint portal ring.
 - Excited state: sustained fast motion adds a cyan emission glow.
 - Emission wave: when excitement cools, a ripple wave emits.
 
@@ -51,4 +54,3 @@ The shape you edit is not the drawn path; it drives the tracing machine.
 ## Constraints
 - Offline, no dependencies.
 - HTML + Canvas + Vanilla JS only.
-

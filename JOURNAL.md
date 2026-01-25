@@ -17,3 +17,7 @@
 - Added mobile long-press delete and double-tap add-point handling.
 - Added wrap-around portal rings at screen edges.
 - Strengthened touch event prevention to block iOS selection popups.
+
+## 2026-01-23 (engine lock)
+- Locked current engine baseline for reuse across future projects.
+- Added ENGINE_LOCK.md marker.
