@@ -21,3 +21,17 @@
 ## 2026-01-23 (engine lock)
 - Locked current engine baseline for reuse across future projects.
 - Added ENGINE_LOCK.md marker.
+
+## 2026-01-24
+- Added domain folder structure under `domains/`.
+- Implemented the first world (Fold) with crease rendering, paper shading, and symmetry snap rings.
+- Added a bottom world strip for switching between worlds.
+- Added domain transition veil + portal ring effect.
+- Strengthened Fold paper shading and crease contrast for higher legibility.
+- Added Fold snap paper-click sound and short crease lock.
+- Added radial world wheel (press-and-hold on empty space) for fast switching.
+- Fold now uses stability-driven wrinkle overlays, crease growth on drag, and a snap sweep highlight.
+- Implemented Fold-line gameplay: drag a fold line, preview reflection, release to fold.
+- Added fold-line creases, fold quality snap logic, and a minimal Fold book snapshot list.
+- Fold lines now fade quickly after the fold.
+- Folding now splits edges at the fold line for more paper-accurate results.

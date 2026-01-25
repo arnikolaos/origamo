@@ -32,6 +32,7 @@ body {
   -webkit-user-select: none;
   user-select: none;
   -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 #stage {
@@ -114,6 +115,60 @@ body {
   box-shadow: 0 0 6px rgba(255, 103, 179, 0.4);
 }
 
+.domain-strip {
+  position: absolute;
+  bottom: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 999px;
+  background: rgba(12, 3, 8, 0.55);
+  border: 1px solid rgba(255, 103, 179, 0.2);
+  backdrop-filter: blur(8px);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 9px;
+  color: rgba(255, 213, 232, 0.7);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.domain-card {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 6px 10px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, border 0.2s ease;
+}
+
+.domain-card .glyph {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255, 213, 232, 0.5);
+  box-shadow: 0 0 6px rgba(255, 103, 179, 0.35);
+}
+
+.domain-card.is-active {
+  background: rgba(255, 103, 179, 0.2);
+  border-color: rgba(255, 103, 179, 0.45);
+  color: rgba(255, 213, 232, 0.95);
+}
+
+.domain-card.is-active .glyph {
+  background: rgba(255, 213, 232, 0.95);
+  box-shadow: 0 0 8px rgba(255, 103, 179, 0.65);
+}
+
 @media (max-width: 720px) {
   .hud {
     left: 16px;
@@ -123,5 +178,12 @@ body {
   .volume-control {
     top: 16px;
     right: 16px;
+  }
+
+  .domain-strip {
+    bottom: 14px;
+    padding: 8px 10px;
+    gap: 6px;
+    font-size: 8px;
   }
 }

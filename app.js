@@ -5,6 +5,7 @@ const modeLabel = document.getElementById("modeLabel");
 const pointsLabel = document.getElementById("pointsLabel");
 const signalLabel = document.getElementById("signalLabel");
 const volumeControl = document.getElementById("volumeControl");
+const domainCards = Array.from(document.querySelectorAll(".domain-card"));
 
 const TAU = Math.PI * 2;
 const SUBTLETY = 0.55;
@@ -40,6 +41,32 @@ const state = {
   lastFlare: 0,
   tapPending: null,
   touchHandledAt: 0,
+  domain: {
+    id: "fold",
+    pending: null,
+    t: 0,
+    overlayAlpha: 0,
+    swapped: false,
+  },
+  fold: {
+    tool: "foldline",
+    foldLine: { ax: 0, ay: 0, bx: 0, by: 0, active: false, previewSide: 1 },
+    creases: [],
+    book: [],
+    crease: [],
+    depth: [],
+    tension: 0,
+    phase: 0,
+    lastSnap: 0,
+    lock: 0,
+    wrinkle: 0,
+  },
+  worldWheel: {
+    active: false,
+    t: 0,
+    anchor: { x: 0, y: 0 },
+    selection: null,
+  },
 };
 
 const trace = [];
@@ -52,6 +79,7 @@ const maxMemories = 3;
 const edgeWhispers = [];
 const emissionWaves = [];
 const portalWraps = [];
+const foldSnaps = [];
 
 let width = 0;
 let height = 0;
@@ -74,6 +102,36 @@ const turtle = {
 let audioCtx = null;
 let masterGain = null;
 let pendingVolume = Number(volumeControl.value);
+let noiseBuffer = null;
+
+const DOMAINS = [
+  { id: "geometry", name: "Geometry" },
+  { id: "fold", name: "Fold" },
+  { id: "gravity", name: "Gravity" },
+  { id: "electrons", name: "Electrons" },
+  { id: "architecture", name: "Architecture" },
+  { id: "machines", name: "Machines" },
+];
+
+function domainNameForId(id) {
+  const match = DOMAINS.find((domain) => domain.id === id);
+  return match ? match.name : id;
+}
+
+function setActiveDomain(id) {
+  domainCards.forEach((card) => {
+    card.classList.toggle("is-active", card.dataset.domain === id);
+  });
+}
+
+function switchDomain(nextId) {
+  if (!nextId || nextId === state.domain.id) return;
+  if (state.domain.t > 0) return;
+  state.domain.pending = nextId;
+  state.domain.t = 0.0001;
+  state.domain.overlayAlpha = 0;
+  state.domain.swapped = false;
+}
 
 function resize() {
   width = window.innerWidth;
@@ -109,6 +167,29 @@ function clamp(value, min, max) {
 
 function distance(a, b) {
   return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function signedDistanceToLine(point, line) {
+  const dx = line.bx - line.ax;
+  const dy = line.by - line.ay;
+  const len = Math.hypot(dx, dy) || 1;
+  const nx = -dy / len;
+  const ny = dx / len;
+  const apx = point.x - line.ax;
+  const apy = point.y - line.ay;
+  return apx * nx + apy * ny;
+}
+
+function reflectPointAcrossLine(point, line) {
+  const dx = line.bx - line.ax;
+  const dy = line.by - line.ay;
+  const len = Math.hypot(dx, dy) || 1;
+  const nx = -dy / len;
+  const ny = dx / len;
+  const apx = point.x - line.ax;
+  const apy = point.y - line.ay;
+  const s = apx * nx + apy * ny;
+  return { x: point.x - 2 * s * nx, y: point.y - 2 * s * ny };
 }
 
 function closestEdge(point, poly) {
@@ -177,6 +258,78 @@ function detectPolygon(avgTurn, tolerance = 2.5) {
   return rounded;
 }
 
+function linePolygonIntersections(line, points) {
+  const hits = [];
+  const eps = 0.0001;
+  for (let i = 0; i < points.length; i += 1) {
+    const a = points[i];
+    const b = points[(i + 1) % points.length];
+    const sa = signedDistanceToLine(a, line);
+    const sb = signedDistanceToLine(b, line);
+    if (Math.abs(sa) < eps && Math.abs(sb) < eps) continue;
+    if (sa === 0) {
+      hits.push({ x: a.x, y: a.y });
+      continue;
+    }
+    if (sb === 0) {
+      hits.push({ x: b.x, y: b.y });
+      continue;
+    }
+    if (sa * sb < 0) {
+      const t = sa / (sa - sb);
+      hits.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+    }
+  }
+  const unique = [];
+  hits.forEach((pt) => {
+    const exists = unique.some((u) => distance(u, pt) < 2);
+    if (!exists) unique.push(pt);
+  });
+  return unique;
+}
+
+function clipFoldLineToPolygon(line, points) {
+  const intersections = linePolygonIntersections(line, points);
+  if (intersections.length >= 2) {
+    const dx = line.bx - line.ax;
+    const dy = line.by - line.ay;
+    const len = Math.hypot(dx, dy) || 1;
+    const ux = dx / len;
+    const uy = dy / len;
+    const sorted = intersections
+      .map((pt) => ({ pt, t: (pt.x - line.ax) * ux + (pt.y - line.ay) * uy }))
+      .sort((a, b) => a.t - b.t);
+    return { a: sorted[0].pt, b: sorted[sorted.length - 1].pt };
+  }
+  return { a: { x: line.ax, y: line.ay }, b: { x: line.bx, y: line.by } };
+}
+
+function mergeClosePoints(points, eps) {
+  if (points.length <= 3) return points.slice();
+  const merged = [];
+  points.forEach((point) => {
+    const last = merged[merged.length - 1];
+    if (last && distance(last, point) < eps) {
+      last.x = (last.x + point.x) * 0.5;
+      last.y = (last.y + point.y) * 0.5;
+    } else {
+      merged.push({ x: point.x, y: point.y });
+    }
+  });
+  if (merged.length > 2 && distance(merged[0], merged[merged.length - 1]) < eps) {
+    const last = merged.pop();
+    merged[0].x = (merged[0].x + last.x) * 0.5;
+    merged[0].y = (merged[0].y + last.y) * 0.5;
+  }
+  for (let i = merged.length - 1; i >= 0; i -= 1) {
+    const prev = merged[(i - 1 + merged.length) % merged.length];
+    if (distance(prev, merged[i]) < eps && merged.length > 3) {
+      merged.splice(i, 1);
+    }
+  }
+  return merged;
+}
+
 function resetTurtle() {
   turtle.position = { x: center.x + baseStep * 1.2, y: center.y };
   turtle.heading = state.rotation;
@@ -200,6 +353,12 @@ function ensureAudio() {
   masterGain = audioCtx.createGain();
   masterGain.gain.value = pendingVolume * 0.1;
   masterGain.connect(audioCtx.destination);
+  const bufferSize = audioCtx.sampleRate * 0.08;
+  noiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const data = noiseBuffer.getChannelData(0);
+  for (let i = 0; i < bufferSize; i += 1) {
+    data[i] = (Math.random() * 2 - 1) * 0.6;
+  }
 }
 
 function keyRatioForPoints(count) {
@@ -251,6 +410,26 @@ function playPulse(angle) {
 
   filter.connect(gain);
   gain.connect(masterGain);
+}
+
+function playFoldSnap() {
+  if (!audioCtx || !masterGain || !noiseBuffer) return;
+  const source = audioCtx.createBufferSource();
+  source.buffer = noiseBuffer;
+  const filter = audioCtx.createBiquadFilter();
+  filter.type = "bandpass";
+  filter.frequency.value = 1200;
+  filter.Q.value = 1.2;
+  const gain = audioCtx.createGain();
+  const now = audioCtx.currentTime;
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(0.03, now + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
+  source.connect(filter);
+  filter.connect(gain);
+  gain.connect(masterGain);
+  source.start(now);
+  source.stop(now + 0.14);
 }
 
 function updateTurtle(delta, angles, lengths) {
@@ -319,18 +498,21 @@ function clear(t) {
 
 function drawTrace(now) {
   ctx.save();
-  ctx.lineWidth = 2.4 + (state.calm * 1.5 + state.loopSettle * 1.2) * SUBTLETY;
+  const foldMode = state.domain.id === "fold";
+  const baseWidth = foldMode ? 3.2 : 2.4;
+  const widthBoost = (state.calm * 1.5 + state.loopSettle * 1.2) * SUBTLETY;
+  ctx.lineWidth = baseWidth + widthBoost;
   ctx.lineCap = "round";
-    const hue = 330;
-    const saturation = 80 + state.mood * 10 + state.excited * 6;
-    const lightness = 58 + state.mood * 8 + state.excited * 6;
+  const hue = 330;
+  const saturation = 80 + state.mood * 10 + state.excited * 6 - (foldMode ? 18 : 0);
+  const lightness = 58 + state.mood * 8 + state.excited * 6 - (foldMode ? 6 : 0);
   for (let i = 1; i < trace.length; i += 1) {
     const prev = trace[i - 1];
     const current = trace[i];
     const jump = Math.hypot(current.x - prev.x, current.y - prev.y);
     if (jump > Math.min(width, height) * 0.6) continue;
     const age = (now - current.t) / 1000;
-    const alpha = Math.max(0, 1 - age / 6);
+    const alpha = Math.max(0, 1 - age / 6) * (foldMode ? 0.75 : 1);
     if (alpha <= 0) continue;
     ctx.strokeStyle = `hsla(${hue}, ${saturation}%, ${lightness}%, ${alpha * 0.9})`;
     ctx.beginPath();
@@ -393,6 +575,22 @@ function polygonCentroid(points) {
     y += point.y;
   });
   return { x: x / points.length, y: y / points.length };
+}
+
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
+function ensureFoldState() {
+  const count = shapePoints.length;
+  while (state.fold.crease.length < count) {
+    state.fold.crease.push(0.5);
+  }
+  while (state.fold.depth.length < count) {
+    state.fold.depth.push(0);
+  }
+  if (state.fold.crease.length > count) state.fold.crease.length = count;
+  if (state.fold.depth.length > count) state.fold.depth.length = count;
 }
 
 function drawDepthHull(now) {
@@ -656,8 +854,254 @@ function drawWrapPortals(now) {
   ctx.restore();
 }
 
+function drawFoldSurface(now) {
+  if (state.domain.id !== "fold") return;
+  if (shapePoints.length < 3) return;
+  const centroid = polygonCentroid(shapePoints);
+  const radius = shapePoints.reduce((sum, point) => sum + distance(point, centroid), 0) / shapePoints.length;
+  const phase = state.fold.phase;
+  const lightX = centroid.x + Math.cos(phase) * radius * 0.35;
+  const lightY = centroid.y + Math.sin(phase) * radius * 0.35;
+  const lockBoost = state.fold.lock * 12;
+  const baseLight = 20 + state.fold.tension * 14 + lockBoost;
+  const highlight = 34 + state.fold.tension * 22 + lockBoost;
+  const gradient = ctx.createLinearGradient(lightX - radius, lightY - radius, lightX + radius, lightY + radius);
+  gradient.addColorStop(0, `hsla(332, 34%, ${highlight}%, 0.6)`);
+  gradient.addColorStop(1, `hsla(330, 30%, ${baseLight}%, 0.75)`);
+
+  ctx.save();
+  ctx.fillStyle = gradient;
+  ctx.beginPath();
+  shapePoints.forEach((point, index) => {
+    if (index === 0) ctx.moveTo(point.x, point.y);
+    else ctx.lineTo(point.x, point.y);
+  });
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawFoldCreases() {
+  if (state.domain.id !== "fold") return;
+  if (shapePoints.length < 3) return;
+  ctx.save();
+  for (let i = 0; i < shapePoints.length; i += 1) {
+    const next = (i + 1) % shapePoints.length;
+    const depth = (state.fold.depth[i] + state.fold.depth[next]) * 0.5;
+    const strength = clamp(state.fold.crease[i], 0.15, 1);
+    const lockBoost = state.fold.lock * 0.5;
+    const mountain = depth >= 0;
+    ctx.setLineDash(mountain ? [] : [6, 6]);
+    ctx.strokeStyle = mountain
+      ? `rgba(255, 213, 232, ${0.32 + strength * 0.35 + lockBoost})`
+      : `rgba(255, 171, 208, ${0.24 + strength * 0.3 + lockBoost})`;
+    ctx.lineWidth = 1.3 + strength * 1.6 + lockBoost * 1.1;
+    ctx.beginPath();
+    ctx.moveTo(shapePoints[i].x, shapePoints[i].y);
+    ctx.lineTo(shapePoints[next].x, shapePoints[next].y);
+    ctx.stroke();
+  }
+  ctx.restore();
+  ctx.setLineDash([]);
+}
+
+function drawFoldLineCreases() {
+  if (state.domain.id !== "fold") return;
+  if (state.fold.creases.length === 0) return;
+  ctx.save();
+  state.fold.creases.forEach((crease) => {
+    const age = crease.t ? (state.now - crease.t) / (crease.duration || 1400) : 0;
+    const fade = clamp(1 - age, 0, 1);
+    const strength = clamp(crease.strength * fade, 0.05, 1);
+    const mountain = crease.type === "mountain";
+    ctx.setLineDash(mountain ? [] : [6, 6]);
+    ctx.strokeStyle = mountain
+      ? `rgba(255, 213, 232, ${0.2 + strength * 0.4})`
+      : `rgba(255, 171, 208, ${0.18 + strength * 0.35})`;
+    ctx.lineWidth = 1.1 + strength * 1.6;
+    ctx.beginPath();
+    ctx.moveTo(crease.ax, crease.ay);
+    ctx.lineTo(crease.bx, crease.by);
+    ctx.stroke();
+  });
+  ctx.restore();
+  ctx.setLineDash([]);
+}
+
+function drawFoldLinePreview() {
+  if (state.domain.id !== "fold") return;
+  const line = state.fold.foldLine;
+  if (!line.active) return;
+  const length = Math.hypot(line.bx - line.ax, line.by - line.ay);
+  if (length < 4) return;
+  ctx.save();
+  ctx.strokeStyle = "rgba(255, 213, 232, 0.7)";
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.moveTo(line.ax, line.ay);
+  ctx.lineTo(line.bx, line.by);
+  ctx.stroke();
+
+  const preview = shapePoints.map((point) => {
+    const s = signedDistanceToLine(point, line);
+    if (s * line.previewSide > 1.5) {
+      return reflectPointAcrossLine(point, line);
+    }
+    return { x: point.x, y: point.y };
+  });
+
+  ctx.strokeStyle = "rgba(255, 213, 232, 0.35)";
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  preview.forEach((point, index) => {
+    if (index === 0) ctx.moveTo(point.x, point.y);
+    else ctx.lineTo(point.x, point.y);
+  });
+  ctx.closePath();
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawFoldWrinkles(now) {
+  if (state.domain.id !== "fold") return;
+  if (shapePoints.length < 3) return;
+  const intensity = clamp(state.fold.wrinkle, 0, 1);
+  if (intensity < 0.08) return;
+  const centroid = polygonCentroid(shapePoints);
+  const radius = shapePoints.reduce((sum, point) => sum + distance(point, centroid), 0) / shapePoints.length;
+  const count = 10;
+  ctx.save();
+  ctx.beginPath();
+  shapePoints.forEach((point, index) => {
+    if (index === 0) ctx.moveTo(point.x, point.y);
+    else ctx.lineTo(point.x, point.y);
+  });
+  ctx.closePath();
+  ctx.clip();
+  ctx.strokeStyle = `rgba(255, 171, 208, ${intensity * 0.12})`;
+  ctx.lineWidth = 1;
+  for (let i = 0; i < count; i += 1) {
+    const phase = now * 0.0006 + i * 1.4;
+    const angle = phase + Math.sin(phase * 1.7) * 0.4;
+    const offset = (Math.sin(phase * 2.3) * 0.5 + 0.5) * radius * 0.6 - radius * 0.3;
+    const dx = Math.cos(angle);
+    const dy = Math.sin(angle);
+    const cx = centroid.x + -dy * offset;
+    const cy = centroid.y + dx * offset;
+    ctx.beginPath();
+    ctx.moveTo(cx - dx * radius, cy - dy * radius);
+    ctx.lineTo(cx + dx * radius, cy + dy * radius);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawFoldSnaps(now) {
+  if (state.domain.id !== "fold") return;
+  ctx.save();
+  foldSnaps.forEach((snap) => {
+    const age = (now - snap.t) / 1000;
+    const progress = age / 1.2;
+    if (progress >= 1) return;
+    const alpha = (1 - progress) * 0.25;
+    const radius = snap.radius + progress * snap.radius * 1.3;
+    ctx.strokeStyle = `rgba(255, 213, 232, ${alpha})`;
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.arc(snap.x, snap.y, radius, 0, TAU);
+    ctx.stroke();
+    const sweepAlpha = alpha * 0.6;
+    const sweepAngle = snap.angle + progress * 0.6;
+    const dx = Math.cos(sweepAngle);
+    const dy = Math.sin(sweepAngle);
+    ctx.strokeStyle = `rgba(255, 213, 232, ${sweepAlpha})`;
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(snap.x - dx * radius, snap.y - dy * radius);
+    ctx.lineTo(snap.x + dx * radius, snap.y + dy * radius);
+    ctx.stroke();
+  });
+  ctx.restore();
+}
+
+function drawDomainTransition() {
+  if (state.domain.t <= 0) return;
+  const alpha = state.domain.overlayAlpha;
+  if (alpha <= 0) return;
+  const centroid = polygonCentroid(shapePoints);
+  const pulse = Math.sin(state.domain.t * Math.PI);
+  const radius = baseStep * (1.2 + pulse * 0.35);
+  ctx.save();
+  ctx.fillStyle = `rgba(12, 3, 10, ${alpha})`;
+  ctx.fillRect(0, 0, width, height);
+  ctx.strokeStyle = `rgba(255, 213, 232, ${alpha * 0.45})`;
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.arc(centroid.x, centroid.y, radius, 0, TAU);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function updateWorldWheel(delta) {
+  if (!state.worldWheel.active && state.worldWheel.t <= 0) return;
+  const target = state.worldWheel.active ? 1 : 0;
+  const speed = state.worldWheel.active ? 6 : 4;
+  state.worldWheel.t = clamp(state.worldWheel.t + (target - state.worldWheel.t) * delta * speed, 0, 1);
+  if (!state.worldWheel.active && state.worldWheel.t < 0.02) {
+    state.worldWheel.t = 0;
+    state.worldWheel.selection = null;
+  }
+}
+
+function updateWorldWheelSelection(position) {
+  const dx = position.x - state.worldWheel.anchor.x;
+  const dy = position.y - state.worldWheel.anchor.y;
+  const radius = Math.hypot(dx, dy);
+  if (radius < 22) {
+    state.worldWheel.selection = null;
+    return;
+  }
+  const angle = Math.atan2(dy, dx);
+  const step = TAU / DOMAINS.length;
+  const index = Math.round((angle + Math.PI) / step) % DOMAINS.length;
+  state.worldWheel.selection = DOMAINS[index].id;
+}
+
+function drawWorldWheel() {
+  if (state.worldWheel.t <= 0) return;
+  const { x, y } = state.worldWheel.anchor;
+  const t = state.worldWheel.t;
+  const radius = baseStep * (0.9 + t * 0.8);
+  ctx.save();
+  ctx.globalAlpha = 0.6 * t;
+  ctx.strokeStyle = "rgba(255, 213, 232, 0.25)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, TAU);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  ctx.font = "10px \"Avenir Next\", \"Futura\", \"Gill Sans\", sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  DOMAINS.forEach((domain, index) => {
+    const angle = index * (TAU / DOMAINS.length) - Math.PI / 2;
+    const itemX = x + Math.cos(angle) * radius;
+    const itemY = y + Math.sin(angle) * radius;
+    const active = domain.id === state.worldWheel.selection;
+    ctx.fillStyle = active ? "rgba(255, 213, 232, 0.9)" : "rgba(255, 213, 232, 0.55)";
+    ctx.beginPath();
+    ctx.arc(itemX, itemY, active ? 6 : 4, 0, TAU);
+    ctx.fill();
+    ctx.fillStyle = active ? "rgba(255, 213, 232, 0.9)" : "rgba(255, 213, 232, 0.65)";
+    ctx.fillText(domain.name.toUpperCase(), itemX, itemY + 12);
+  });
+  ctx.restore();
+}
+
 function updateHUD() {
-  modeLabel.textContent = "shape";
+  modeLabel.textContent = domainNameForId(state.domain.id).toLowerCase();
   pointsLabel.textContent = shapePoints.length;
   signalLabel.textContent = state.detected ? `${state.detected}-gon` : "—";
 }
@@ -810,6 +1254,183 @@ function applyBalanceField(delta) {
   });
 }
 
+function updateDomainTransition(delta) {
+  if (state.domain.t <= 0 && !state.domain.pending) return;
+  const duration = 0.8;
+  state.domain.t = Math.min(1, state.domain.t + delta / duration);
+  state.domain.overlayAlpha = Math.sin(state.domain.t * Math.PI) * 0.35;
+  if (!state.domain.swapped && state.domain.t >= 0.5 && state.domain.pending) {
+    state.domain.id = state.domain.pending;
+    state.domain.pending = null;
+    state.domain.swapped = true;
+    setActiveDomain(state.domain.id);
+  }
+  if (state.domain.t >= 1) {
+    state.domain.t = 0;
+    state.domain.overlayAlpha = 0;
+    state.domain.swapped = false;
+  }
+}
+
+function updateFoldState(delta, angles, edges) {
+  if (state.domain.id !== "fold") return;
+  if (shapePoints.length < 3) return;
+  ensureFoldState();
+
+  const avgEdge = edges.reduce((sum, len) => sum + len, 0) / edges.length;
+  const avgAngle = angles.reduce((sum, angle) => sum + angle, 0) / angles.length;
+  if (!Number.isFinite(avgEdge) || avgEdge <= 0) return;
+  const edgeVar = edges.reduce((max, edge) => Math.max(max, Math.abs(edge - avgEdge) / avgEdge), 0);
+  const angleVar = angles.reduce((max, angle) => Math.max(max, Math.abs(angle - avgAngle) / avgAngle), 0);
+  const calm = 1 - clamp(state.dragEnergy * 1.1, 0, 1);
+  const regularity = clamp(1 - (edgeVar * 0.55 + angleVar * 0.45), 0, 1);
+  const stability = clamp((0.65 * state.symmetry + 0.35 * regularity), 0, 1) * (0.35 + 0.65 * calm);
+  const dragInfluence = clamp(state.dragEnergy, 0, 1);
+  const phase = state.rotation * 0.8 + state.sweep.angle * 0.25 + Math.sin(state.now * 0.0006) * 0.2 * dragInfluence;
+
+  state.fold.tension = clamp(stability + (state.symmetry - 0.85) * 0.6, 0, 1);
+  state.fold.phase = phase;
+  state.fold.wrinkle = lerp(state.fold.wrinkle, 1 - stability, clamp(delta * 2.2, 0, 1));
+
+  for (let i = 0; i < edges.length; i += 1) {
+    const diff = Math.abs(edges[i] - avgEdge) / avgEdge;
+    const target = clamp(1 - diff * 6, 0, 1) * (0.45 + stability * 0.55);
+    state.fold.crease[i] = lerp(state.fold.crease[i], target, clamp(delta * 3, 0, 1));
+  }
+
+  if (state.dragging && state.dragging.last) {
+    const pointer = state.dragging.last;
+    const { index } = closestEdge(pointer, shapePoints);
+    const boost = clamp(dragInfluence * 0.9 + 0.1, 0, 1);
+    if (Number.isFinite(index)) {
+      state.fold.crease[index] = clamp(state.fold.crease[index] + delta * 1.4 * boost, 0, 1);
+    }
+    if (state.dragging.type === "point") {
+      const left = (state.dragging.index - 1 + shapePoints.length) % shapePoints.length;
+      const right = state.dragging.index % shapePoints.length;
+      state.fold.crease[left] = clamp(state.fold.crease[left] + delta * 1.1 * boost, 0, 1);
+      state.fold.crease[right] = clamp(state.fold.crease[right] + delta * 1.1 * boost, 0, 1);
+    }
+  }
+
+  const wobble = dragInfluence > 0.7 ? Math.sin(state.now * 0.008) * 0.18 * dragInfluence : 0;
+  const count = shapePoints.length;
+  for (let i = 0; i < count; i += 1) {
+    const targetDepth = Math.sin((i / count) * TAU + phase + wobble) * stability;
+    state.fold.depth[i] = lerp(state.fold.depth[i], targetDepth, clamp(delta * 4, 0, 1));
+  }
+}
+
+function foldQualityFromPoints(points) {
+  const edges = polygonEdgeLengths(points);
+  const angles = polygonAngles(points);
+  const avgEdge = edges.reduce((sum, len) => sum + len, 0) / edges.length;
+  const avgAngle = angles.reduce((sum, angle) => sum + angle, 0) / angles.length;
+  if (!Number.isFinite(avgEdge) || avgEdge <= 0) return 0;
+  const edgeVar = edges.reduce((max, edge) => Math.max(max, Math.abs(edge - avgEdge) / avgEdge), 0);
+  const angleVar = angles.reduce((max, angle) => Math.max(max, Math.abs(angle - avgAngle) / avgAngle), 0);
+  const regularity = clamp(1 - (edgeVar * 0.55 + angleVar * 0.45), 0, 1);
+  const symmetryScore = clamp(1 - (edgeVar + angleVar) * 0.6, 0, 1);
+  return clamp(regularity * 0.6 + symmetryScore * 0.4, 0, 1);
+}
+
+function applyFoldLine(line, sideSign, previewOnly = false) {
+  if (!line.active) return;
+  const length = Math.hypot(line.bx - line.ax, line.by - line.ay);
+  if (length < 12) return;
+  if (!sideSign) sideSign = 1;
+  const eps = 0.5;
+  if (previewOnly) return;
+
+  const splitPoints = [];
+  for (let i = 0; i < shapePoints.length; i += 1) {
+    const p = shapePoints[i];
+    const q = shapePoints[(i + 1) % shapePoints.length];
+    splitPoints.push({ x: p.x, y: p.y });
+    const sP = signedDistanceToLine(p, line);
+    const sQ = signedDistanceToLine(q, line);
+    if (sP * sQ < 0) {
+      const t = sP / (sP - sQ);
+      splitPoints.push({
+        x: p.x + (q.x - p.x) * t,
+        y: p.y + (q.y - p.y) * t,
+      });
+    }
+  }
+
+  const folded = splitPoints.map((point) => {
+    const s = signedDistanceToLine(point, line);
+    if (s * sideSign > eps) {
+      return reflectPointAcrossLine(point, line);
+    }
+    return { x: point.x, y: point.y };
+  });
+
+  const merged = mergeClosePoints(folded, 8);
+  if (merged.length >= 3) {
+    const margin = 24;
+    shapePoints.length = 0;
+    merged.forEach((point) => {
+      shapePoints.push({
+        x: clamp(point.x, margin, width - margin),
+        y: clamp(point.y, margin, height - margin),
+      });
+    });
+  }
+
+  pointTargets.length = shapePoints.length;
+  pointAge.length = shapePoints.length;
+  pointWobble.length = shapePoints.length;
+  for (let i = 0; i < shapePoints.length; i += 1) {
+    pointTargets[i] = null;
+    pointAge[i] = 0;
+    pointWobble[i] = { x: 0, y: 0, t: 0 };
+  }
+
+  ensureFoldState();
+
+  const clipped = clipFoldLineToPolygon(line, shapePoints);
+  state.fold.creases.push({
+    ax: clipped.a.x,
+    ay: clipped.a.y,
+    bx: clipped.b.x,
+    by: clipped.b.y,
+    strength: 0.7,
+    type: sideSign > 0 ? "mountain" : "valley",
+    t: state.now,
+    duration: 1400,
+  });
+
+  state.fold.creases.forEach((crease) => {
+    const mid = { x: (crease.ax + crease.bx) * 0.5, y: (crease.ay + crease.by) * 0.5 };
+    const dist = Math.abs(signedDistanceToLine(mid, line));
+    if (dist < 18) crease.strength = clamp(crease.strength + 0.2, 0, 1);
+  });
+
+  const quality = foldQualityFromPoints(shapePoints);
+  if (quality > 0.82 && state.now - state.fold.lastSnap > 1200) {
+    const centroid = polygonCentroid(shapePoints);
+    foldSnaps.push({
+      x: centroid.x,
+      y: centroid.y,
+      t: state.now,
+      radius: baseStep * 0.6,
+      angle: state.rotation + Math.random() * 0.6,
+    });
+    state.fold.lastSnap = state.now;
+    state.fold.lock = 1;
+    playFoldSnap();
+    pushMemory();
+    state.fold.book.push({
+      id: `${state.now}`,
+      timestamp: state.now,
+      points: shapePoints.map((pt) => ({ x: pt.x, y: pt.y })),
+      creases: state.fold.creases.map((crease) => ({ ...crease })),
+      screenshotSeed: quality,
+    });
+  }
+}
+
 function updateProgram(delta) {
   applySeeds(delta);
   const symmetry = applySoftConstraints(delta);
@@ -820,6 +1441,7 @@ function updateProgram(delta) {
   state.lastAngles = angles;
   state.symmetry = symmetry || 0;
   state.mood = moodForPoints(shapePoints.length);
+  updateFoldState(delta, angles, edges);
   if (state.symmetry > 0.92) {
     state.symmetryHold = Math.min(2, state.symmetryHold + delta);
   } else {
@@ -904,6 +1526,15 @@ function updateSurprises(delta) {
     state.lastFlare = state.now;
   }
   state.prevExcited = state.excited;
+  state.fold.lock = Math.max(0, state.fold.lock - delta * 0.35);
+  if (state.domain.id === "fold" && state.fold.creases.length > 0) {
+    for (let i = state.fold.creases.length - 1; i >= 0; i -= 1) {
+      const crease = state.fold.creases[i];
+      if (crease.t && crease.duration && state.now - crease.t > crease.duration) {
+        state.fold.creases.splice(i, 1);
+      }
+    }
+  }
 
   for (let i = bursts.length - 1; i >= 0; i -= 1) {
     if (state.now - bursts[i].t > 1400) bursts.splice(i, 1);
@@ -928,6 +1559,9 @@ function updateSurprises(delta) {
   for (let i = portalWraps.length - 1; i >= 0; i -= 1) {
     if (state.now - portalWraps[i].t > 1200) portalWraps.splice(i, 1);
   }
+  for (let i = foldSnaps.length - 1; i >= 0; i -= 1) {
+    if (state.now - foldSnaps[i].t > 1400) foldSnaps.splice(i, 1);
+  }
 
   for (let i = 0; i < pointAge.length; i += 1) {
     pointAge[i] += delta;
@@ -946,7 +1580,7 @@ function animate(now) {
 
   if (state.dragging && state.dragging.type === "rotate" && !state.dragging.moved) {
     const holdTime = state.now - state.dragging.startTime;
-    if (holdTime > 180) {
+    if (holdTime > 180 && !state.worldWheel.active) {
       state.breathing = true;
       state.dragging.isBreath = true;
     }
@@ -955,15 +1589,24 @@ function animate(now) {
   applyBreath(delta);
   applyPointInertia(delta);
   applyBalanceField(delta);
+  updateDomainTransition(delta);
+  updateWorldWheel(delta);
   updateProgram(delta);
   updateSurprises(delta);
 
   clear(now / 1000);
-  drawDepthHull(now);
+  if (state.domain.id === "fold") {
+    drawFoldSurface(now);
+  } else {
+    drawDepthHull(now);
+  }
   drawTrace(now);
   drawMemories(now);
   drawBloom(state.detected, state.bloom);
   drawGhostPolygon(state.detected, state.bloom);
+  drawFoldWrinkles(now);
+  drawFoldCreases();
+  drawFoldLineCreases();
   drawBursts(now);
   drawEdgeWhispers(now);
   drawPortal(now);
@@ -971,9 +1614,13 @@ function animate(now) {
   drawQuietOrbit(now);
   drawEmissionWaves(now);
   drawWrapPortals(now);
+  drawFoldSnaps(now);
   drawShapeField(now);
   drawAngleEchoes(state.lastAngles);
   drawSymmetryHalo(state.symmetry);
+  drawFoldLinePreview();
+  drawWorldWheel();
+  drawDomainTransition();
 
   updateHUD();
   requestAnimationFrame(animate);
@@ -1002,7 +1649,12 @@ canvas.addEventListener("touchend", (event) => {
   if (!event.changedTouches || event.changedTouches.length === 0) return;
   const touch = event.changedTouches[0];
   const position = { x: touch.clientX, y: touch.clientY };
-  if (state.dragging && state.dragging.type === "rotate") {
+  if (state.dragging && (state.dragging.type === "rotate" || state.dragging.type === "foldline")) {
+    if (state.dragging.type === "foldline") {
+      const line = state.fold.foldLine;
+      const length = Math.hypot(line.bx - line.ax, line.by - line.ay);
+      if (length > 8) return;
+    }
     const moved = distance(state.dragging.origin, state.dragging.last || state.dragging.origin);
     if (moved < 6 && !(state.dragging && state.dragging.isBreath)) {
       const now = state.now;
@@ -1070,6 +1722,35 @@ canvas.addEventListener("pointerdown", (event) => {
     return;
   }
 
+  if (state.domain.id === "fold") {
+    state.fold.foldLine = {
+      ax: position.x,
+      ay: position.y,
+      bx: position.x,
+      by: position.y,
+      active: true,
+      previewSide: 1,
+    };
+    state.dragging = {
+      type: "foldline",
+      origin: position,
+      last: position,
+      moved: false,
+      startTime: state.now,
+      previewOnly: event.altKey,
+    };
+    state.dragging.holdTimer = window.setTimeout(() => {
+      if (!state.dragging || state.dragging.type !== "foldline") return;
+      if (state.dragging.moved) return;
+      state.worldWheel.active = true;
+      state.worldWheel.anchor = { x: position.x, y: position.y };
+      state.worldWheel.selection = state.domain.id;
+      state.dragging.type = "world";
+      state.fold.foldLine.active = false;
+    }, 600);
+    return;
+  }
+
   state.dragging = {
     type: "rotate",
     origin: position,
@@ -1079,6 +1760,15 @@ canvas.addEventListener("pointerdown", (event) => {
     moved: false,
     startTime: state.now,
   };
+  state.dragging.holdTimer = window.setTimeout(() => {
+    if (!state.dragging || state.dragging.type !== "rotate") return;
+    if (state.dragging.moved) return;
+    state.worldWheel.active = true;
+    state.worldWheel.anchor = { x: position.x, y: position.y };
+    state.worldWheel.selection = state.domain.id;
+    state.dragging.type = "world";
+    state.breathing = false;
+  }, 600);
 });
 
 volumeControl.addEventListener("input", (event) => {
@@ -1086,6 +1776,12 @@ volumeControl.addEventListener("input", (event) => {
   if (masterGain) {
     masterGain.gain.value = pendingVolume * 0.1;
   }
+});
+
+domainCards.forEach((card) => {
+  card.addEventListener("click", () => {
+    switchDomain(card.dataset.domain);
+  });
 });
 
 canvas.addEventListener("pointermove", (event) => {
@@ -1101,7 +1797,7 @@ canvas.addEventListener("pointermove", (event) => {
     const dy = position.y - state.dragging.last.y;
     const speed = Math.hypot(dx, dy);
     state.dragging.lastDelta = { x: dx, y: dy };
-    if (state.dragging.type === "point" && speed > 6) {
+    if ((state.dragging.type === "point" || state.dragging.type === "rotate" || state.dragging.type === "foldline") && speed > 6) {
       state.dragging.moved = true;
       if (state.dragging.holdTimer) {
         window.clearTimeout(state.dragging.holdTimer);
@@ -1130,6 +1826,13 @@ canvas.addEventListener("pointermove", (event) => {
     pointTargets[state.dragging.index] = bounded;
     state.breathing = false;
     state.lastTouch = { index: state.dragging.index, t: state.now };
+  } else if (state.dragging.type === "foldline") {
+    state.fold.foldLine.bx = position.x;
+    state.fold.foldLine.by = position.y;
+    const side = signedDistanceToLine(position, state.fold.foldLine);
+    state.fold.foldLine.previewSide = side >= 0 ? 1 : -1;
+  } else if (state.dragging.type === "world") {
+    updateWorldWheelSelection(position);
   } else if (state.dragging.type === "rotate") {
     const dx = position.x - state.dragging.origin.x;
     state.rotation = state.dragging.start + dx * 0.002;
@@ -1146,9 +1849,30 @@ canvas.addEventListener("pointerup", (event) => {
     return;
   }
   const wasBreathing = state.dragging && state.dragging.isBreath;
+  const wasWorld = state.dragging && state.dragging.type === "world";
+  const wasFoldLine = state.dragging && state.dragging.type === "foldline";
   state.breathing = false;
   if (state.dragging && state.dragging.holdTimer) {
     window.clearTimeout(state.dragging.holdTimer);
+  }
+  if (wasWorld) {
+    state.worldWheel.active = false;
+    if (state.worldWheel.selection) {
+      switchDomain(state.worldWheel.selection);
+    }
+    state.worldWheel.selection = null;
+    state.dragging = null;
+    state.touchHandledAt = state.now;
+    return;
+  }
+  if (wasFoldLine) {
+    const previewOnly = state.dragging.previewOnly || event.altKey;
+    const line = state.fold.foldLine;
+    applyFoldLine(line, line.previewSide, previewOnly);
+    state.fold.foldLine.active = false;
+    state.dragging = null;
+    state.touchHandledAt = state.now;
+    return;
   }
   if (state.dragging && state.dragging.type === "point") {
     pushMemory();
@@ -1263,4 +1987,6 @@ window.addEventListener("resize", () => {
 
 resize();
 resetTurtle();
+ensureFoldState();
+setActiveDomain(state.domain.id);
 requestAnimationFrame(animate);

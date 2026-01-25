@@ -18,6 +18,11 @@ The shape you edit is not the drawn path; it drives the tracing machine.
 - Click and hold empty space (no drag) to "breathe" the shape.
 - Single click empty space to drop a morph seed.
 
+## Worlds
+- Use the bottom world strip to switch between worlds.
+- World changes keep your shape and trace; only the interpretation changes.
+- Press and hold empty space to open the radial world wheel, then release on a world.
+
 ## Sound
 - Sound is meditative; it responds to motion and symmetry.
 - Symmetry triggers a minor pentatonic chord; higher symmetry can become unison.
@@ -45,6 +50,15 @@ The shape you edit is not the drawn path; it drives the tracing machine.
 - Wrap portals: the tracer reappears on the opposite edge with a faint portal ring.
 - Excited state: sustained fast motion adds a cyan emission glow.
 - Emission wave: when excitement cools, a ripple wave emits.
+
+## Fold World Notes
+- In Fold, drag on empty space to draw a fold line; release to fold.
+- Hold Option/Alt while releasing to preview without folding.
+- The polygon becomes a crease pattern with paper-like shading.
+- Solid lines are mountain folds; dashed lines are valley folds.
+- High symmetry locks into a stable fold with a soft snap ring.
+- A quiet paper-click sound confirms a stable fold.
+- Low stability adds subtle wrinkles that fade as balance returns.
 
 ## Tips
 - Try building symmetry slowly; the system rewards it with subtle cues.
