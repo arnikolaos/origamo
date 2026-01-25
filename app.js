@@ -984,6 +984,18 @@ function pickPoint(position, points, radius = 18) {
   return -1;
 }
 
+canvas.addEventListener("touchstart", (event) => {
+  event.preventDefault();
+}, { passive: false });
+
+canvas.addEventListener("touchmove", (event) => {
+  event.preventDefault();
+}, { passive: false });
+
+canvas.addEventListener("touchend", (event) => {
+  event.preventDefault();
+}, { passive: false });
+
 canvas.addEventListener("pointerdown", (event) => {
   if (event.pointerType === "touch") {
     event.preventDefault();

@@ -39,6 +39,8 @@ body {
   height: 100vh;
   display: block;
   touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .hud {
