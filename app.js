@@ -985,6 +985,9 @@ function pickPoint(position, points, radius = 18) {
 }
 
 canvas.addEventListener("pointerdown", (event) => {
+  if (event.pointerType === "touch") {
+    event.preventDefault();
+  }
   const position = { x: event.clientX, y: event.clientY };
   canvas.setPointerCapture(event.pointerId);
   ensureAudio();
@@ -1028,6 +1031,9 @@ volumeControl.addEventListener("input", (event) => {
 });
 
 canvas.addEventListener("pointermove", (event) => {
+  if (event.pointerType === "touch") {
+    event.preventDefault();
+  }
   const position = { x: event.clientX, y: event.clientY };
 
   if (!state.dragging) return;
@@ -1073,6 +1079,9 @@ canvas.addEventListener("pointermove", (event) => {
 });
 
 canvas.addEventListener("pointerup", (event) => {
+  if (event.pointerType === "touch") {
+    event.preventDefault();
+  }
   canvas.releasePointerCapture(event.pointerId);
   const wasBreathing = state.dragging && state.dragging.isBreath;
   state.breathing = false;
@@ -1109,6 +1118,10 @@ canvas.addEventListener("pointerup", (event) => {
     }
   }
   state.dragging = null;
+});
+
+canvas.addEventListener("contextmenu", (event) => {
+  event.preventDefault();
 });
 
 canvas.addEventListener("dblclick", (event) => {
