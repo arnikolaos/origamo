@@ -39,6 +39,7 @@ const state = {
   prevExcited: 0,
   lastFlare: 0,
   tapPending: null,
+  touchHandledAt: 0,
 };
 
 const trace = [];
@@ -997,6 +998,50 @@ canvas.addEventListener("touchend", (event) => {
   event.preventDefault();
 }, { passive: false });
 
+canvas.addEventListener("touchend", (event) => {
+  if (!event.changedTouches || event.changedTouches.length === 0) return;
+  const touch = event.changedTouches[0];
+  const position = { x: touch.clientX, y: touch.clientY };
+  if (state.dragging && state.dragging.type === "rotate") {
+    const moved = distance(state.dragging.origin, state.dragging.last || state.dragging.origin);
+    if (moved < 6 && !(state.dragging && state.dragging.isBreath)) {
+      const now = state.now;
+      const tap = state.tapPending;
+      const sameSpot = tap && distance({ x: tap.x, y: tap.y }, position) < 25;
+      if (tap && now - tap.t < 360 && sameSpot) {
+        window.clearTimeout(tap.timer);
+        state.tapPending = null;
+        const { index, dist } = closestEdge(position, shapePoints);
+        if (dist < 40) {
+          const margin = 24;
+          const bounded = {
+            x: clamp(position.x, margin, width - margin),
+            y: clamp(position.y, margin, height - margin),
+          };
+          shapePoints.splice(index, 0, bounded);
+          pointTargets.splice(index, 0, null);
+          pointAge.splice(index, 0, 0);
+          pointWobble.splice(index, 0, { x: 0, y: 0, t: 0 });
+          state.phaseBloom = 1;
+        }
+      } else {
+        const timer = window.setTimeout(() => {
+          seeds.push({
+            x: position.x,
+            y: position.y,
+            t: state.now,
+            duration: 2.6,
+            radius: 10,
+          });
+          state.tapPending = null;
+        }, 360);
+        state.tapPending = { t: now, x: position.x, y: position.y, timer };
+      }
+      state.touchHandledAt = now;
+    }
+  }
+}, { passive: false });
+
 canvas.addEventListener("pointerdown", (event) => {
   if (event.pointerType === "touch") {
     event.preventDefault();
@@ -1096,6 +1141,10 @@ canvas.addEventListener("pointerup", (event) => {
     event.preventDefault();
   }
   canvas.releasePointerCapture(event.pointerId);
+  if (event.pointerType === "touch" && state.now - state.touchHandledAt < 50) {
+    state.dragging = null;
+    return;
+  }
   const wasBreathing = state.dragging && state.dragging.isBreath;
   state.breathing = false;
   if (state.dragging && state.dragging.holdTimer) {
