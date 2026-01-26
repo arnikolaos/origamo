@@ -54,6 +54,7 @@ The shape you edit is not the drawn path; it drives the tracing machine.
 ## Fold World Notes
 - In Fold, drag on empty space to draw a fold line; release to fold.
 - Hold Option/Alt while releasing to preview without folding.
+- A fold line must cross the shape to take effect.
 - The polygon becomes a crease pattern with paper-like shading.
 - Solid lines are mountain folds; dashed lines are valley folds.
 - High symmetry locks into a stable fold with a soft snap ring.

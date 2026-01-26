@@ -35,3 +35,7 @@
 - Added fold-line creases, fold quality snap logic, and a minimal Fold book snapshot list.
 - Fold lines now fade quickly after the fold.
 - Folding now splits edges at the fold line for more paper-accurate results.
+- Fold now requires the line to cross the shape; otherwise nothing folds.
+- Fold side selection favors the side closest to where the line started.
+- Added a subtle hinge offset for a paper-depth cue on the folded side.
+- Removed the tracer in Fold and replaced it with a soft paper-fiber drift layer.

@@ -50,7 +50,7 @@ const state = {
   },
   fold: {
     tool: "foldline",
-    foldLine: { ax: 0, ay: 0, bx: 0, by: 0, active: false, previewSide: 1 },
+  foldLine: { ax: 0, ay: 0, bx: 0, by: 0, active: false, previewSide: 1, sideHint: null },
     creases: [],
     book: [],
     crease: [],
@@ -80,6 +80,7 @@ const edgeWhispers = [];
 const emissionWaves = [];
 const portalWraps = [];
 const foldSnaps = [];
+const fibers = [];
 
 let width = 0;
 let height = 0;
@@ -167,6 +168,19 @@ function clamp(value, min, max) {
 
 function distance(a, b) {
   return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function nearestPointInfo(position, points) {
+  let closest = -1;
+  let minDist = Infinity;
+  points.forEach((point, index) => {
+    const d = distance(point, position);
+    if (d < minDist) {
+      minDist = d;
+      closest = index;
+    }
+  });
+  return { index: closest, dist: minDist };
 }
 
 function signedDistanceToLine(point, line) {
@@ -302,6 +316,79 @@ function clipFoldLineToPolygon(line, points) {
     return { a: sorted[0].pt, b: sorted[sorted.length - 1].pt };
   }
   return { a: { x: line.ax, y: line.ay }, b: { x: line.bx, y: line.by } };
+}
+
+function buildFoldedPoints(line, sideSign, points) {
+  if (!points || points.length < 3) return null;
+  const augmented = [];
+  const intersectionIndices = [];
+  for (let i = 0; i < points.length; i += 1) {
+    const p = points[i];
+    const q = points[(i + 1) % points.length];
+    augmented.push({ x: p.x, y: p.y });
+    const sP = signedDistanceToLine(p, line);
+    const sQ = signedDistanceToLine(q, line);
+    if (sP * sQ < 0) {
+      const t = sP / (sP - sQ);
+      const hit = { x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t };
+      augmented.push(hit);
+      intersectionIndices.push(augmented.length - 1);
+    }
+  }
+
+  if (intersectionIndices.length < 2) return null;
+  const idxA = intersectionIndices[0];
+  const idxB = intersectionIndices[1];
+  const total = augmented.length;
+
+  const pathForward = [];
+  for (let i = idxA; ; i = (i + 1) % total) {
+    pathForward.push(i);
+    if (i === idxB) break;
+  }
+  const pathBackward = [];
+  for (let i = idxB; ; i = (i + 1) % total) {
+    pathBackward.push(i);
+    if (i === idxA) break;
+  }
+
+  const avgSigned = (path) => {
+    let sum = 0;
+    let count = 0;
+    path.forEach((idx) => {
+      if (idx === idxA || idx === idxB) return;
+      sum += signedDistanceToLine(augmented[idx], line);
+      count += 1;
+    });
+    return count > 0 ? sum / count : 0;
+  };
+
+  const forwardSign = avgSigned(pathForward);
+  const foldPath = forwardSign * sideSign > 0 ? pathForward : pathBackward;
+  const foldSet = new Set(foldPath);
+
+  const dx = line.bx - line.ax;
+  const dy = line.by - line.ay;
+  const len = Math.hypot(dx, dy) || 1;
+  const nx = -dy / len;
+  const ny = dx / len;
+  const hingeSpan = baseStep * 1.6;
+  const hingeOffset = baseStep * 0.08;
+
+  const folded = augmented.map((point, idx) => {
+    if (!foldSet.has(idx)) return { x: point.x, y: point.y };
+    if (idx === idxA || idx === idxB) return { x: point.x, y: point.y };
+    const s = signedDistanceToLine(point, line);
+    const reflected = reflectPointAcrossLine(point, line);
+    const factor = clamp(1 - Math.abs(s) / hingeSpan, 0, 1);
+    const offsetSign = -Math.sign(s) || 0;
+    return {
+      x: reflected.x + nx * hingeOffset * factor * offsetSign,
+      y: reflected.y + ny * hingeOffset * factor * offsetSign,
+    };
+  });
+
+  return folded;
 }
 
 function mergeClosePoints(points, eps) {
@@ -934,6 +1021,7 @@ function drawFoldLinePreview() {
   if (!line.active) return;
   const length = Math.hypot(line.bx - line.ax, line.by - line.ay);
   if (length < 4) return;
+  if (!buildFoldedPoints(line, line.previewSide, shapePoints)) return;
   ctx.save();
   ctx.strokeStyle = "rgba(255, 213, 232, 0.7)";
   ctx.lineWidth = 1.4;
@@ -942,13 +1030,7 @@ function drawFoldLinePreview() {
   ctx.lineTo(line.bx, line.by);
   ctx.stroke();
 
-  const preview = shapePoints.map((point) => {
-    const s = signedDistanceToLine(point, line);
-    if (s * line.previewSide > 1.5) {
-      return reflectPointAcrossLine(point, line);
-    }
-    return { x: point.x, y: point.y };
-  });
+  const preview = buildFoldedPoints(line, line.previewSide, shapePoints) || shapePoints;
 
   ctx.strokeStyle = "rgba(255, 213, 232, 0.35)";
   ctx.lineWidth = 1.2;
@@ -991,6 +1073,27 @@ function drawFoldWrinkles(now) {
     ctx.beginPath();
     ctx.moveTo(cx - dx * radius, cy - dy * radius);
     ctx.lineTo(cx + dx * radius, cy + dy * radius);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawFoldFibers(now) {
+  if (state.domain.id !== "fold") return;
+  ctx.save();
+  const count = 12;
+  for (let i = 0; i < count; i += 1) {
+    const phase = now * 0.00015 + i * 0.6;
+    const x = (width * 0.2 + Math.sin(phase) * width * 0.3 + (i * 73) % width);
+    const y = (height * 0.2 + Math.cos(phase * 1.2) * height * 0.35 + (i * 41) % height);
+    const len = baseStep * 0.9 + (i % 5) * 6;
+    const angle = phase * 0.6 + i * 0.4;
+    const alpha = 0.04 + Math.sin(phase + i) * 0.02;
+    ctx.strokeStyle = `rgba(255, 213, 232, ${alpha})`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x - Math.cos(angle) * len, y - Math.sin(angle) * len);
+    ctx.lineTo(x + Math.cos(angle) * len, y + Math.sin(angle) * len);
     ctx.stroke();
   }
   ctx.restore();
@@ -1342,29 +1445,8 @@ function applyFoldLine(line, sideSign, previewOnly = false) {
   const eps = 0.5;
   if (previewOnly) return;
 
-  const splitPoints = [];
-  for (let i = 0; i < shapePoints.length; i += 1) {
-    const p = shapePoints[i];
-    const q = shapePoints[(i + 1) % shapePoints.length];
-    splitPoints.push({ x: p.x, y: p.y });
-    const sP = signedDistanceToLine(p, line);
-    const sQ = signedDistanceToLine(q, line);
-    if (sP * sQ < 0) {
-      const t = sP / (sP - sQ);
-      splitPoints.push({
-        x: p.x + (q.x - p.x) * t,
-        y: p.y + (q.y - p.y) * t,
-      });
-    }
-  }
-
-  const folded = splitPoints.map((point) => {
-    const s = signedDistanceToLine(point, line);
-    if (s * sideSign > eps) {
-      return reflectPointAcrossLine(point, line);
-    }
-    return { x: point.x, y: point.y };
-  });
+  const folded = buildFoldedPoints(line, sideSign, shapePoints);
+  if (!folded) return;
 
   const merged = mergeClosePoints(folded, 8);
   if (merged.length >= 3) {
@@ -1600,7 +1682,11 @@ function animate(now) {
   } else {
     drawDepthHull(now);
   }
-  drawTrace(now);
+  if (state.domain.id !== "fold") {
+    drawTrace(now);
+  } else {
+    drawFoldFibers(now);
+  }
   drawMemories(now);
   drawBloom(state.detected, state.bloom);
   drawGhostPolygon(state.detected, state.bloom);
@@ -1723,6 +1809,8 @@ canvas.addEventListener("pointerdown", (event) => {
   }
 
   if (state.domain.id === "fold") {
+    const nearest = nearestPointInfo(position, shapePoints);
+    const sideHint = nearest.dist < baseStep * 1.2 ? { ...shapePoints[nearest.index] } : null;
     state.fold.foldLine = {
       ax: position.x,
       ay: position.y,
@@ -1730,6 +1818,7 @@ canvas.addEventListener("pointerdown", (event) => {
       by: position.y,
       active: true,
       previewSide: 1,
+      sideHint,
     };
     state.dragging = {
       type: "foldline",
@@ -1829,8 +1918,15 @@ canvas.addEventListener("pointermove", (event) => {
   } else if (state.dragging.type === "foldline") {
     state.fold.foldLine.bx = position.x;
     state.fold.foldLine.by = position.y;
-    const side = signedDistanceToLine(position, state.fold.foldLine);
-    state.fold.foldLine.previewSide = side >= 0 ? 1 : -1;
+    const hint = state.fold.foldLine.sideHint;
+    if (hint) {
+      const sign = Math.sign(signedDistanceToLine(hint, state.fold.foldLine));
+      if (sign !== 0) state.fold.foldLine.previewSide = sign;
+    } else {
+      const centroid = polygonCentroid(shapePoints);
+      const sign = Math.sign(signedDistanceToLine(centroid, state.fold.foldLine));
+      if (sign !== 0) state.fold.foldLine.previewSide = -sign;
+    }
   } else if (state.dragging.type === "world") {
     updateWorldWheelSelection(position);
   } else if (state.dragging.type === "rotate") {
