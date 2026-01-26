@@ -1791,7 +1791,14 @@ canvas.addEventListener("pointerdown", (event) => {
 
   const idx = pickPoint(position, shapePoints);
   if (idx >= 0) {
-    state.dragging = { type: "point", index: idx, last: position, moved: false };
+    state.dragging = {
+      type: "point",
+      index: idx,
+      last: position,
+      origin: position,
+      moved: false,
+      startTime: state.now,
+    };
     state.dragging.holdTimer = window.setTimeout(() => {
       if (!state.dragging || state.dragging.type !== "point") return;
       if (state.dragging.moved) return;
@@ -1804,7 +1811,7 @@ canvas.addEventListener("pointerdown", (event) => {
         state.lastTouch = { index: -1, t: 0 };
       }
       state.dragging = null;
-    }, 650);
+    }, event.pointerType === "touch" ? 650 : 900);
     return;
   }
 
@@ -1891,6 +1898,16 @@ canvas.addEventListener("pointermove", (event) => {
       if (state.dragging.holdTimer) {
         window.clearTimeout(state.dragging.holdTimer);
         state.dragging.holdTimer = null;
+      }
+    }
+    if (state.dragging.type === "point" && state.dragging.origin) {
+      const dragDist = distance(state.dragging.origin, position);
+      if (dragDist > 2.5) {
+        state.dragging.moved = true;
+        if (state.dragging.holdTimer) {
+          window.clearTimeout(state.dragging.holdTimer);
+          state.dragging.holdTimer = null;
+        }
       }
     }
     state.dragEnergy = Math.max(state.dragEnergy, clamp(speed / 40, 0, 1));

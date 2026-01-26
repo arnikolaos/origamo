@@ -39,3 +39,4 @@
 - Fold side selection favors the side closest to where the line started.
 - Added a subtle hinge offset for a paper-depth cue on the folded side.
 - Removed the tracer in Fold and replaced it with a soft paper-fiber drift layer.
+- Adjusted long-press delete to avoid accidental trackpad deletions while keeping the gesture.
