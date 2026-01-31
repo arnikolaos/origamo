@@ -49,6 +49,7 @@
     clouds: [],
     barriers: [],
     pulses: [],
+    snaps: [],
     coherence: 0,
     lastSnap: 0,
     pointer: { x: 0, y: 0, down: false, mode: "observe" },
@@ -141,7 +142,30 @@
     ctx.restore();
   }
 
+  function drawPointerRing() {
+    const ringAlpha = state.pointer.down ? 0.45 : 0.2;
+    const radius = state.pointer.down ? 34 : 24;
+    ctx.save();
+    ctx.strokeStyle = `rgba(255, 213, 232, ${ringAlpha})`;
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.arc(state.pointer.x, state.pointer.y, radius, 0, TAU);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function closestPointOnSegment(point, a, b) {
+    const abx = b.x - a.x;
+    const aby = b.y - a.y;
+    const apx = point.x - a.x;
+    const apy = point.y - a.y;
+    const denom = abx * abx + aby * aby || 1;
+    const t = clamp((apx * abx + apy * aby) / denom, 0, 1);
+    return { x: a.x + abx * t, y: a.y + aby * t, t };
+  }
+
   function drawBarriers() {
+    const cloud = state.clouds[0];
     state.barriers.forEach((barrier) => {
       const strength = clamp(barrier.thickness, 0.2, 1);
       ctx.save();
@@ -151,6 +175,19 @@
       ctx.moveTo(barrier.ax, barrier.ay);
       ctx.lineTo(barrier.bx, barrier.by);
       ctx.stroke();
+      const dist = Math.abs(signedDistanceToLine({ x: cloud.mx, y: cloud.my }, barrier));
+      const shimmer = clamp(1 - dist / (cloud.sigma * 0.9), 0, 1);
+      if (shimmer > 0.2) {
+        const closest = closestPointOnSegment(
+          { x: cloud.mx, y: cloud.my },
+          { x: barrier.ax, y: barrier.ay },
+          { x: barrier.bx, y: barrier.by }
+        );
+        ctx.fillStyle = `rgba(127, 232, 255, ${shimmer * 0.35})`;
+        ctx.beginPath();
+        ctx.arc(closest.x, closest.y, 4 + shimmer * 4, 0, TAU);
+        ctx.fill();
+      }
       if (barrier.leak && state.now - barrier.leak < 600) {
         const t = (state.now - barrier.leak) / 600;
         const alpha = (1 - t) * 0.5;
@@ -180,6 +217,23 @@
       ctx.strokeStyle = `rgba(127, 232, 255, ${alpha * 0.6})`;
       ctx.beginPath();
       ctx.arc(pulse.x, pulse.y, radius * 1.2, 0, TAU);
+      ctx.stroke();
+      ctx.restore();
+    });
+  }
+
+  function drawSnapEffects() {
+    state.snaps.forEach((snap) => {
+      const age = (state.now - snap.t) / 1000;
+      if (age > 1.2) return;
+      const progress = age / 1.2;
+      const alpha = (1 - progress) * 0.4;
+      const radius = snap.radius + progress * snap.radius * 1.8;
+      ctx.save();
+      ctx.strokeStyle = `rgba(255, 213, 232, ${alpha})`;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.arc(snap.x, snap.y, radius, 0, TAU);
       ctx.stroke();
       ctx.restore();
     });
@@ -235,6 +289,9 @@
     for (let i = state.pulses.length - 1; i >= 0; i -= 1) {
       if (state.now - state.pulses[i].t > 1400) state.pulses.splice(i, 1);
     }
+    for (let i = state.snaps.length - 1; i >= 0; i -= 1) {
+      if (state.now - state.snaps[i].t > 1400) state.snaps.splice(i, 1);
+    }
 
     const cloud = state.clouds[0];
     const kinetic = Math.hypot(cloud.vx, cloud.vy) * 0.01 + Math.abs(cloud.sigma - cloud.sigma0) * 0.002;
@@ -245,6 +302,12 @@
     }
     if (state.coherence > 1.2 && state.now - state.lastSnap > 2000) {
       state.lastSnap = state.now;
+      state.snaps.push({
+        x: cloud.mx,
+        y: cloud.my,
+        t: state.now,
+        radius: cloud.sigma * 0.45,
+      });
       host.saveSnapshot && host.saveSnapshot(world, world.getSnapshot());
     }
 
@@ -257,9 +320,11 @@
 
   function render() {
     drawBackground();
+    drawPointerRing();
     drawBarriers();
     drawPulses();
     state.clouds.forEach(drawCloud);
+    drawSnapEffects();
 
     if (state.coherence > 1.2) {
       const c = state.clouds[0];

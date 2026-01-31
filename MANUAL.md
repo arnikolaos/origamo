@@ -65,6 +65,8 @@ The shape you edit is not the drawn path; it drives the tracing machine.
 - Double-tap/click to inject a pulse and increase energy.
 - Hold Shift and drag to place a barrier (desktop).
 - Barriers allow occasional tunneling when the cloud is energetic.
+- A scanner ring shows observation focus even when not collapsing.
+- Gallery dots appear after coherence snaps; tap to restore.
 
 ## Tips
 - Try building symmetry slowly; the system rewards it with subtle cues.

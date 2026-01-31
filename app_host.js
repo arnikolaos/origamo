@@ -6,6 +6,8 @@ const pointsLabel = document.getElementById("pointsLabel");
 const signalLabel = document.getElementById("signalLabel");
 const volumeControl = document.getElementById("volumeControl");
 const worldCards = Array.from(document.querySelectorAll(".domain-card"));
+const gallery = document.getElementById("gallery");
+const galleryItems = document.getElementById("galleryItems");
 
 const TAU = Math.PI * 2;
 
@@ -26,6 +28,7 @@ const host = {
       const existing = JSON.parse(localStorage.getItem(key) || "[]");
       existing.unshift({ t: Date.now(), snapshot });
       localStorage.setItem(key, JSON.stringify(existing.slice(0, 12)));
+      renderGallery(world);
     } catch (err) {
       // ignore storage errors
     }
@@ -60,6 +63,29 @@ function switchWorld(id) {
 function setActiveCard(id) {
   worldCards.forEach((card) => {
     card.classList.toggle("is-active", card.dataset.domain === id);
+  });
+}
+
+function renderGallery(world) {
+  if (!gallery || !galleryItems || !world) return;
+  const key = `origamo:gallery:${world.id}`;
+  let items = [];
+  try {
+    items = JSON.parse(localStorage.getItem(key) || "[]");
+  } catch (err) {
+    items = [];
+  }
+  gallery.style.display = items.length ? "flex" : "none";
+  galleryItems.innerHTML = "";
+  items.slice(0, 8).forEach((item, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "gallery-dot";
+    button.title = new Date(item.t).toLocaleString();
+    button.addEventListener("click", () => {
+      if (world.loadSnapshot) world.loadSnapshot(item.snapshot);
+    });
+    galleryItems.appendChild(button);
   });
 }
 
@@ -111,6 +137,7 @@ function loop(now) {
       window.devicePixelRatio || 1
     );
     setActiveCard(currentWorld.id);
+    renderGallery(currentWorld);
   }
 
   if (transition.active) {
@@ -127,6 +154,7 @@ function loop(now) {
         window.devicePixelRatio || 1
       );
       setActiveCard(currentWorld.id);
+      renderGallery(currentWorld);
     }
     if (transition.t >= 1) {
       transition.active = false;
