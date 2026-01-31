@@ -1,17 +1,14 @@
-const canvas = document.getElementById("stage");
-const ctx = canvas.getContext("2d");
+function createOrigamoWorld(mode = "geometry") {
+  let canvas = null;
+  let ctx = null;
+  let host = null;
+  let volumeControl = null;
 
-const modeLabel = document.getElementById("modeLabel");
-const pointsLabel = document.getElementById("pointsLabel");
-const signalLabel = document.getElementById("signalLabel");
-const volumeControl = document.getElementById("volumeControl");
-const domainCards = Array.from(document.querySelectorAll(".domain-card"));
+  const TAU = Math.PI * 2;
+  const SUBTLETY = 0.55;
+  const MINOR_PENTATONIC = [0, 3, 5, 7, 10];
 
-const TAU = Math.PI * 2;
-const SUBTLETY = 0.55;
-const MINOR_PENTATONIC = [0, 3, 5, 7, 10];
-
-const state = {
+  const state = {
   now: performance.now(),
   bloom: 0,
   detected: null,
@@ -42,15 +39,11 @@ const state = {
   tapPending: null,
   touchHandledAt: 0,
   domain: {
-    id: "fold",
-    pending: null,
-    t: 0,
-    overlayAlpha: 0,
-    swapped: false,
+    id: mode,
   },
   fold: {
     tool: "foldline",
-  foldLine: { ax: 0, ay: 0, bx: 0, by: 0, active: false, previewSide: 1, sideHint: null },
+    foldLine: { ax: 0, ay: 0, bx: 0, by: 0, active: false, previewSide: 1, sideHint: null },
     creases: [],
     book: [],
     crease: [],
@@ -60,12 +53,6 @@ const state = {
     lastSnap: 0,
     lock: 0,
     wrinkle: 0,
-  },
-  worldWheel: {
-    active: false,
-    t: 0,
-    anchor: { x: 0, y: 0 },
-    selection: null,
   },
 };
 
@@ -102,47 +89,19 @@ const turtle = {
 
 let audioCtx = null;
 let masterGain = null;
-let pendingVolume = Number(volumeControl.value);
+let pendingVolume = 0.3;
 let noiseBuffer = null;
 
-const DOMAINS = [
-  { id: "geometry", name: "Geometry" },
-  { id: "fold", name: "Fold" },
-  { id: "gravity", name: "Gravity" },
-  { id: "electrons", name: "Electrons" },
-  { id: "architecture", name: "Architecture" },
-  { id: "machines", name: "Machines" },
-];
-
-function domainNameForId(id) {
-  const match = DOMAINS.find((domain) => domain.id === id);
-  return match ? match.name : id;
-}
-
-function setActiveDomain(id) {
-  domainCards.forEach((card) => {
-    card.classList.toggle("is-active", card.dataset.domain === id);
-  });
-}
-
-function switchDomain(nextId) {
-  if (!nextId || nextId === state.domain.id) return;
-  if (state.domain.t > 0) return;
-  state.domain.pending = nextId;
-  state.domain.t = 0.0001;
-  state.domain.overlayAlpha = 0;
-  state.domain.swapped = false;
-}
-
-function resize() {
-  width = window.innerWidth;
-  height = window.innerHeight;
-  const ratio = window.devicePixelRatio || 1;
-  canvas.width = width * ratio;
-  canvas.height = height * ratio;
-  canvas.style.width = `${width}px`;
-  canvas.style.height = `${height}px`;
-  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+function resize(nextWidth, nextHeight, ratio = 1) {
+  width = nextWidth;
+  height = nextHeight;
+  if (canvas && ctx) {
+    canvas.width = width * ratio;
+    canvas.height = height * ratio;
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  }
   center = { x: width * 0.5, y: height * 0.52 };
   baseStep = Math.min(width, height) * 0.07;
   speed = baseStep * 1.3;
@@ -1127,86 +1086,14 @@ function drawFoldSnaps(now) {
   ctx.restore();
 }
 
-function drawDomainTransition() {
-  if (state.domain.t <= 0) return;
-  const alpha = state.domain.overlayAlpha;
-  if (alpha <= 0) return;
-  const centroid = polygonCentroid(shapePoints);
-  const pulse = Math.sin(state.domain.t * Math.PI);
-  const radius = baseStep * (1.2 + pulse * 0.35);
-  ctx.save();
-  ctx.fillStyle = `rgba(12, 3, 10, ${alpha})`;
-  ctx.fillRect(0, 0, width, height);
-  ctx.strokeStyle = `rgba(255, 213, 232, ${alpha * 0.45})`;
-  ctx.lineWidth = 1.4;
-  ctx.beginPath();
-  ctx.arc(centroid.x, centroid.y, radius, 0, TAU);
-  ctx.stroke();
-  ctx.restore();
-}
-
-function updateWorldWheel(delta) {
-  if (!state.worldWheel.active && state.worldWheel.t <= 0) return;
-  const target = state.worldWheel.active ? 1 : 0;
-  const speed = state.worldWheel.active ? 6 : 4;
-  state.worldWheel.t = clamp(state.worldWheel.t + (target - state.worldWheel.t) * delta * speed, 0, 1);
-  if (!state.worldWheel.active && state.worldWheel.t < 0.02) {
-    state.worldWheel.t = 0;
-    state.worldWheel.selection = null;
-  }
-}
-
-function updateWorldWheelSelection(position) {
-  const dx = position.x - state.worldWheel.anchor.x;
-  const dy = position.y - state.worldWheel.anchor.y;
-  const radius = Math.hypot(dx, dy);
-  if (radius < 22) {
-    state.worldWheel.selection = null;
-    return;
-  }
-  const angle = Math.atan2(dy, dx);
-  const step = TAU / DOMAINS.length;
-  const index = Math.round((angle + Math.PI) / step) % DOMAINS.length;
-  state.worldWheel.selection = DOMAINS[index].id;
-}
-
-function drawWorldWheel() {
-  if (state.worldWheel.t <= 0) return;
-  const { x, y } = state.worldWheel.anchor;
-  const t = state.worldWheel.t;
-  const radius = baseStep * (0.9 + t * 0.8);
-  ctx.save();
-  ctx.globalAlpha = 0.6 * t;
-  ctx.strokeStyle = "rgba(255, 213, 232, 0.25)";
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.arc(x, y, radius, 0, TAU);
-  ctx.stroke();
-  ctx.globalAlpha = 1;
-
-  ctx.font = "10px \"Avenir Next\", \"Futura\", \"Gill Sans\", sans-serif";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-
-  DOMAINS.forEach((domain, index) => {
-    const angle = index * (TAU / DOMAINS.length) - Math.PI / 2;
-    const itemX = x + Math.cos(angle) * radius;
-    const itemY = y + Math.sin(angle) * radius;
-    const active = domain.id === state.worldWheel.selection;
-    ctx.fillStyle = active ? "rgba(255, 213, 232, 0.9)" : "rgba(255, 213, 232, 0.55)";
-    ctx.beginPath();
-    ctx.arc(itemX, itemY, active ? 6 : 4, 0, TAU);
-    ctx.fill();
-    ctx.fillStyle = active ? "rgba(255, 213, 232, 0.9)" : "rgba(255, 213, 232, 0.65)";
-    ctx.fillText(domain.name.toUpperCase(), itemX, itemY + 12);
-  });
-  ctx.restore();
-}
 
 function updateHUD() {
-  modeLabel.textContent = domainNameForId(state.domain.id).toLowerCase();
-  pointsLabel.textContent = shapePoints.length;
-  signalLabel.textContent = state.detected ? `${state.detected}-gon` : "—";
+  if (!host || !host.setHud) return;
+  host.setHud({
+    world: state.domain.id,
+    points: shapePoints.length,
+    signal: state.detected ? `${state.detected}-gon` : "—",
+  });
 }
 
 function pushMemory() {
@@ -1355,24 +1242,6 @@ function applyBalanceField(delta) {
       state.lastWhisper = state.now;
     }
   });
-}
-
-function updateDomainTransition(delta) {
-  if (state.domain.t <= 0 && !state.domain.pending) return;
-  const duration = 0.8;
-  state.domain.t = Math.min(1, state.domain.t + delta / duration);
-  state.domain.overlayAlpha = Math.sin(state.domain.t * Math.PI) * 0.35;
-  if (!state.domain.swapped && state.domain.t >= 0.5 && state.domain.pending) {
-    state.domain.id = state.domain.pending;
-    state.domain.pending = null;
-    state.domain.swapped = true;
-    setActiveDomain(state.domain.id);
-  }
-  if (state.domain.t >= 1) {
-    state.domain.t = 0;
-    state.domain.overlayAlpha = 0;
-    state.domain.swapped = false;
-  }
 }
 
 function updateFoldState(delta, angles, edges) {
@@ -1654,15 +1523,15 @@ function updateSurprises(delta) {
   }
 }
 
-function animate(now) {
-  const delta = Math.min(0.033, (now - state.now) / 1000);
+function update(dt, now) {
+  const delta = Math.min(0.033, dt);
   state.now = now;
 
   if (state.bloom > 0) state.bloom = Math.max(0, state.bloom - delta * 0.6);
 
   if (state.dragging && state.dragging.type === "rotate" && !state.dragging.moved) {
     const holdTime = state.now - state.dragging.startTime;
-    if (holdTime > 180 && !state.worldWheel.active) {
+    if (holdTime > 180) {
       state.breathing = true;
       state.dragging.isBreath = true;
     }
@@ -1671,11 +1540,14 @@ function animate(now) {
   applyBreath(delta);
   applyPointInertia(delta);
   applyBalanceField(delta);
-  updateDomainTransition(delta);
-  updateWorldWheel(delta);
   updateProgram(delta);
   updateSurprises(delta);
 
+  updateHUD();
+}
+
+function render() {
+  const now = state.now;
   clear(now / 1000);
   if (state.domain.id === "fold") {
     drawFoldSurface(now);
@@ -1705,11 +1577,6 @@ function animate(now) {
   drawAngleEchoes(state.lastAngles);
   drawSymmetryHalo(state.symmetry);
   drawFoldLinePreview();
-  drawWorldWheel();
-  drawDomainTransition();
-
-  updateHUD();
-  requestAnimationFrame(animate);
 }
 
 function pickPoint(position, points, radius = 18) {
@@ -1718,52 +1585,226 @@ function pickPoint(position, points, radius = 18) {
   }
   return -1;
 }
-
-canvas.addEventListener("touchstart", (event) => {
-  event.preventDefault();
-}, { passive: false });
-
-canvas.addEventListener("touchmove", (event) => {
-  event.preventDefault();
-}, { passive: false });
-
-canvas.addEventListener("touchend", (event) => {
-  event.preventDefault();
-}, { passive: false });
-
-canvas.addEventListener("touchend", (event) => {
-  if (!event.changedTouches || event.changedTouches.length === 0) return;
-  const touch = event.changedTouches[0];
-  const position = { x: touch.clientX, y: touch.clientY };
-  if (state.dragging && (state.dragging.type === "rotate" || state.dragging.type === "foldline")) {
-    if (state.dragging.type === "foldline") {
-      const line = state.fold.foldLine;
-      const length = Math.hypot(line.bx - line.ax, line.by - line.ay);
-      if (length > 8) return;
+function handleTap(position, pointerType) {
+  const now = state.now;
+  const tap = state.tapPending;
+  const sameSpot = tap && distance({ x: tap.x, y: tap.y }, position) < 25;
+  if (tap && now - tap.t < 320 && sameSpot) {
+    window.clearTimeout(tap.timer);
+    state.tapPending = null;
+    const { index, dist } = closestEdge(position, shapePoints);
+    if (dist < 40) {
+      const margin = 24;
+      const bounded = {
+        x: clamp(position.x, margin, width - margin),
+        y: clamp(position.y, margin, height - margin),
+      };
+      shapePoints.splice(index, 0, bounded);
+      pointTargets.splice(index, 0, null);
+      pointAge.splice(index, 0, 0);
+      pointWobble.splice(index, 0, { x: 0, y: 0, t: 0 });
+      state.phaseBloom = 1;
     }
-    const moved = distance(state.dragging.origin, state.dragging.last || state.dragging.origin);
-    if (moved < 6 && !(state.dragging && state.dragging.isBreath)) {
-      const now = state.now;
-      const tap = state.tapPending;
-      const sameSpot = tap && distance({ x: tap.x, y: tap.y }, position) < 25;
-      if (tap && now - tap.t < 360 && sameSpot) {
-        window.clearTimeout(tap.timer);
-        state.tapPending = null;
-        const { index, dist } = closestEdge(position, shapePoints);
-        if (dist < 40) {
-          const margin = 24;
-          const bounded = {
-            x: clamp(position.x, margin, width - margin),
-            y: clamp(position.y, margin, height - margin),
-          };
-          shapePoints.splice(index, 0, bounded);
-          pointTargets.splice(index, 0, null);
-          pointAge.splice(index, 0, 0);
-          pointWobble.splice(index, 0, { x: 0, y: 0, t: 0 });
-          state.phaseBloom = 1;
+  } else {
+    const timer = window.setTimeout(() => {
+      seeds.push({
+        x: position.x,
+        y: position.y,
+        t: state.now,
+        duration: 2.6,
+        radius: 10,
+      });
+      state.tapPending = null;
+    }, 320);
+    state.tapPending = { t: now, x: position.x, y: position.y, timer };
+  }
+  state.touchHandledAt = now;
+}
+
+function onPointer(type, x, y, data = {}) {
+  const position = { x, y };
+  const pointerType = data.pointerType || "mouse";
+  if (type === "down") {
+    ensureAudio();
+    state.breathing = false;
+
+    const idx = pickPoint(position, shapePoints);
+    if (idx >= 0) {
+      if (data.button === 2 && shapePoints.length > 3) {
+        shapePoints.splice(idx, 1);
+        pointTargets.splice(idx, 1);
+        pointAge.splice(idx, 1);
+        pointWobble.splice(idx, 1);
+        if (state.lastTouch.index === idx) {
+          state.lastTouch = { index: -1, t: 0 };
         }
+        return;
+      }
+      state.dragging = {
+        type: "point",
+        index: idx,
+        last: position,
+        origin: position,
+        moved: false,
+        startTime: state.now,
+      };
+      state.dragging.holdTimer = window.setTimeout(() => {
+        if (!state.dragging || state.dragging.type !== "point") return;
+        if (state.dragging.moved) return;
+        if (shapePoints.length <= 3) return;
+        shapePoints.splice(idx, 1);
+        pointTargets.splice(idx, 1);
+        pointAge.splice(idx, 1);
+        pointWobble.splice(idx, 1);
+        if (state.lastTouch.index === idx) {
+          state.lastTouch = { index: -1, t: 0 };
+        }
+        state.dragging = null;
+      }, pointerType === "touch" ? 650 : 900);
+      return;
+    }
+
+    if (state.domain.id === "fold") {
+      const nearest = nearestPointInfo(position, shapePoints);
+      const sideHint = nearest.dist < baseStep * 1.2 ? { ...shapePoints[nearest.index] } : null;
+      state.fold.foldLine = {
+        ax: position.x,
+        ay: position.y,
+        bx: position.x,
+        by: position.y,
+        active: true,
+        previewSide: 1,
+        sideHint,
+      };
+      state.dragging = {
+        type: "foldline",
+        origin: position,
+        last: position,
+        moved: false,
+        startTime: state.now,
+        previewOnly: data.altKey,
+      };
+      return;
+    }
+
+    state.dragging = {
+      type: "rotate",
+      origin: position,
+      start: state.rotation,
+      last: position,
+      isBreath: false,
+      moved: false,
+      startTime: state.now,
+    };
+    return;
+  }
+
+  if (type === "move") {
+    if (!state.dragging) return;
+    if (state.dragging.last) {
+      const dx = position.x - state.dragging.last.x;
+      const dy = position.y - state.dragging.last.y;
+      const speed = Math.hypot(dx, dy);
+      state.dragging.lastDelta = { x: dx, y: dy };
+      if ((state.dragging.type === "point" || state.dragging.type === "rotate" || state.dragging.type === "foldline") && speed > 6) {
+        state.dragging.moved = true;
+        if (state.dragging.holdTimer) {
+          window.clearTimeout(state.dragging.holdTimer);
+          state.dragging.holdTimer = null;
+        }
+      }
+      if (state.dragging.type === "point" && state.dragging.origin) {
+        const dragDist = distance(state.dragging.origin, position);
+        if (dragDist > 2.5) {
+          state.dragging.moved = true;
+          if (state.dragging.holdTimer) {
+            window.clearTimeout(state.dragging.holdTimer);
+            state.dragging.holdTimer = null;
+          }
+        }
+      }
+      state.dragEnergy = Math.max(state.dragEnergy, clamp(speed / 40, 0, 1));
+      if (speed > 18) {
+        state.sweep.strength = Math.min(2, state.sweep.strength + speed * 0.01);
+        state.sweep.angle = Math.atan2(dy, dx);
+      }
+      if (speed > 6 && state.dragging.type === "rotate") {
+        state.breathing = false;
+        state.dragging.moved = true;
+        state.dragging.isBreath = false;
+      }
+    }
+    state.dragging.last = position;
+
+    if (state.dragging.type === "point") {
+      const margin = 24;
+      const bounded = {
+        x: clamp(position.x, margin, width - margin),
+        y: clamp(position.y, margin, height - margin),
+      };
+      pointTargets[state.dragging.index] = bounded;
+      state.breathing = false;
+      state.lastTouch = { index: state.dragging.index, t: state.now };
+    } else if (state.dragging.type === "foldline") {
+      state.fold.foldLine.bx = position.x;
+      state.fold.foldLine.by = position.y;
+      const hint = state.fold.foldLine.sideHint;
+      if (hint) {
+        const sign = Math.sign(signedDistanceToLine(hint, state.fold.foldLine));
+        if (sign !== 0) state.fold.foldLine.previewSide = sign;
       } else {
-        const timer = window.setTimeout(() => {
+        const centroid = polygonCentroid(shapePoints);
+        const sign = Math.sign(signedDistanceToLine(centroid, state.fold.foldLine));
+        if (sign !== 0) state.fold.foldLine.previewSide = -sign;
+      }
+    } else if (state.dragging.type === "rotate") {
+      const dx = position.x - state.dragging.origin.x;
+      state.rotation = state.dragging.start + dx * 0.002;
+    }
+    return;
+  }
+
+  if (type === "up") {
+    if (pointerType === "touch" && state.now - state.touchHandledAt < 50) {
+      state.dragging = null;
+      return;
+    }
+    const wasBreathing = state.dragging && state.dragging.isBreath;
+    const wasFoldLine = state.dragging && state.dragging.type === "foldline";
+    state.breathing = false;
+    if (state.dragging && state.dragging.holdTimer) {
+      window.clearTimeout(state.dragging.holdTimer);
+    }
+    if (wasFoldLine) {
+      const previewOnly = state.dragging.previewOnly || data.altKey;
+      const line = state.fold.foldLine;
+      applyFoldLine(line, line.previewSide, previewOnly);
+      state.fold.foldLine.active = false;
+      state.dragging = null;
+      state.touchHandledAt = state.now;
+      return;
+    }
+    if (state.dragging && state.dragging.type === "point") {
+      pushMemory();
+      pointTargets[state.dragging.index] = null;
+      state.lastTouch = { index: state.dragging.index, t: state.now };
+      if (pointAge[state.dragging.index] > 1.5) {
+        const delta = state.dragging.lastDelta || { x: 0, y: 0 };
+        pointWobble[state.dragging.index] = {
+          x: delta.x * 0.9,
+          y: delta.y * 0.9,
+          t: state.now,
+        };
+      } else {
+        pointWobble[state.dragging.index] = { x: 0, y: 0, t: 0 };
+      }
+    }
+    if (state.dragging && state.dragging.type === "rotate") {
+      const moved = distance(state.dragging.origin, state.dragging.last || state.dragging.origin);
+      if (moved < 6 && !wasBreathing) {
+        if (pointerType === "touch") {
+          handleTap(position, pointerType);
+        } else {
           seeds.push({
             x: position.x,
             y: position.y,
@@ -1771,335 +1812,92 @@ canvas.addEventListener("touchend", (event) => {
             duration: 2.6,
             radius: 10,
           });
-          state.tapPending = null;
-        }, 360);
-        state.tapPending = { t: now, x: position.x, y: position.y, timer };
-      }
-      state.touchHandledAt = now;
-    }
-  }
-}, { passive: false });
-
-canvas.addEventListener("pointerdown", (event) => {
-  if (event.pointerType === "touch") {
-    event.preventDefault();
-  }
-  const position = { x: event.clientX, y: event.clientY };
-  canvas.setPointerCapture(event.pointerId);
-  ensureAudio();
-  state.breathing = false;
-
-  const idx = pickPoint(position, shapePoints);
-  if (idx >= 0) {
-    state.dragging = {
-      type: "point",
-      index: idx,
-      last: position,
-      origin: position,
-      moved: false,
-      startTime: state.now,
-    };
-    state.dragging.holdTimer = window.setTimeout(() => {
-      if (!state.dragging || state.dragging.type !== "point") return;
-      if (state.dragging.moved) return;
-      if (shapePoints.length <= 3) return;
-      shapePoints.splice(idx, 1);
-      pointTargets.splice(idx, 1);
-      pointAge.splice(idx, 1);
-      pointWobble.splice(idx, 1);
-      if (state.lastTouch.index === idx) {
-        state.lastTouch = { index: -1, t: 0 };
-      }
-      state.dragging = null;
-    }, event.pointerType === "touch" ? 650 : 900);
-    return;
-  }
-
-  if (state.domain.id === "fold") {
-    const nearest = nearestPointInfo(position, shapePoints);
-    const sideHint = nearest.dist < baseStep * 1.2 ? { ...shapePoints[nearest.index] } : null;
-    state.fold.foldLine = {
-      ax: position.x,
-      ay: position.y,
-      bx: position.x,
-      by: position.y,
-      active: true,
-      previewSide: 1,
-      sideHint,
-    };
-    state.dragging = {
-      type: "foldline",
-      origin: position,
-      last: position,
-      moved: false,
-      startTime: state.now,
-      previewOnly: event.altKey,
-    };
-    state.dragging.holdTimer = window.setTimeout(() => {
-      if (!state.dragging || state.dragging.type !== "foldline") return;
-      if (state.dragging.moved) return;
-      state.worldWheel.active = true;
-      state.worldWheel.anchor = { x: position.x, y: position.y };
-      state.worldWheel.selection = state.domain.id;
-      state.dragging.type = "world";
-      state.fold.foldLine.active = false;
-    }, 600);
-    return;
-  }
-
-  state.dragging = {
-    type: "rotate",
-    origin: position,
-    start: state.rotation,
-    last: position,
-    isBreath: false,
-    moved: false,
-    startTime: state.now,
-  };
-  state.dragging.holdTimer = window.setTimeout(() => {
-    if (!state.dragging || state.dragging.type !== "rotate") return;
-    if (state.dragging.moved) return;
-    state.worldWheel.active = true;
-    state.worldWheel.anchor = { x: position.x, y: position.y };
-    state.worldWheel.selection = state.domain.id;
-    state.dragging.type = "world";
-    state.breathing = false;
-  }, 600);
-});
-
-volumeControl.addEventListener("input", (event) => {
-  pendingVolume = Number(event.target.value);
-  if (masterGain) {
-    masterGain.gain.value = pendingVolume * 0.1;
-  }
-});
-
-domainCards.forEach((card) => {
-  card.addEventListener("click", () => {
-    switchDomain(card.dataset.domain);
-  });
-});
-
-canvas.addEventListener("pointermove", (event) => {
-  if (event.pointerType === "touch") {
-    event.preventDefault();
-  }
-  const position = { x: event.clientX, y: event.clientY };
-
-  if (!state.dragging) return;
-
-  if (state.dragging.last) {
-    const dx = position.x - state.dragging.last.x;
-    const dy = position.y - state.dragging.last.y;
-    const speed = Math.hypot(dx, dy);
-    state.dragging.lastDelta = { x: dx, y: dy };
-    if ((state.dragging.type === "point" || state.dragging.type === "rotate" || state.dragging.type === "foldline") && speed > 6) {
-      state.dragging.moved = true;
-      if (state.dragging.holdTimer) {
-        window.clearTimeout(state.dragging.holdTimer);
-        state.dragging.holdTimer = null;
-      }
-    }
-    if (state.dragging.type === "point" && state.dragging.origin) {
-      const dragDist = distance(state.dragging.origin, position);
-      if (dragDist > 2.5) {
-        state.dragging.moved = true;
-        if (state.dragging.holdTimer) {
-          window.clearTimeout(state.dragging.holdTimer);
-          state.dragging.holdTimer = null;
-        }
-      }
-    }
-    state.dragEnergy = Math.max(state.dragEnergy, clamp(speed / 40, 0, 1));
-    if (speed > 18) {
-      state.sweep.strength = Math.min(2, state.sweep.strength + speed * 0.01);
-      state.sweep.angle = Math.atan2(dy, dx);
-    }
-    if (speed > 6 && state.dragging.type === "rotate") {
-      state.breathing = false;
-      state.dragging.moved = true;
-      state.dragging.isBreath = false;
-    }
-  }
-  state.dragging.last = position;
-
-  if (state.dragging.type === "point") {
-    const margin = 24;
-    const bounded = {
-      x: clamp(position.x, margin, width - margin),
-      y: clamp(position.y, margin, height - margin),
-    };
-    pointTargets[state.dragging.index] = bounded;
-    state.breathing = false;
-    state.lastTouch = { index: state.dragging.index, t: state.now };
-  } else if (state.dragging.type === "foldline") {
-    state.fold.foldLine.bx = position.x;
-    state.fold.foldLine.by = position.y;
-    const hint = state.fold.foldLine.sideHint;
-    if (hint) {
-      const sign = Math.sign(signedDistanceToLine(hint, state.fold.foldLine));
-      if (sign !== 0) state.fold.foldLine.previewSide = sign;
-    } else {
-      const centroid = polygonCentroid(shapePoints);
-      const sign = Math.sign(signedDistanceToLine(centroid, state.fold.foldLine));
-      if (sign !== 0) state.fold.foldLine.previewSide = -sign;
-    }
-  } else if (state.dragging.type === "world") {
-    updateWorldWheelSelection(position);
-  } else if (state.dragging.type === "rotate") {
-    const dx = position.x - state.dragging.origin.x;
-    state.rotation = state.dragging.start + dx * 0.002;
-  }
-});
-
-canvas.addEventListener("pointerup", (event) => {
-  if (event.pointerType === "touch") {
-    event.preventDefault();
-  }
-  canvas.releasePointerCapture(event.pointerId);
-  if (event.pointerType === "touch" && state.now - state.touchHandledAt < 50) {
-    state.dragging = null;
-    return;
-  }
-  const wasBreathing = state.dragging && state.dragging.isBreath;
-  const wasWorld = state.dragging && state.dragging.type === "world";
-  const wasFoldLine = state.dragging && state.dragging.type === "foldline";
-  state.breathing = false;
-  if (state.dragging && state.dragging.holdTimer) {
-    window.clearTimeout(state.dragging.holdTimer);
-  }
-  if (wasWorld) {
-    state.worldWheel.active = false;
-    if (state.worldWheel.selection) {
-      switchDomain(state.worldWheel.selection);
-    }
-    state.worldWheel.selection = null;
-    state.dragging = null;
-    state.touchHandledAt = state.now;
-    return;
-  }
-  if (wasFoldLine) {
-    const previewOnly = state.dragging.previewOnly || event.altKey;
-    const line = state.fold.foldLine;
-    applyFoldLine(line, line.previewSide, previewOnly);
-    state.fold.foldLine.active = false;
-    state.dragging = null;
-    state.touchHandledAt = state.now;
-    return;
-  }
-  if (state.dragging && state.dragging.type === "point") {
-    pushMemory();
-    pointTargets[state.dragging.index] = null;
-    state.lastTouch = { index: state.dragging.index, t: state.now };
-    if (pointAge[state.dragging.index] > 1.5) {
-      const delta = state.dragging.lastDelta || { x: 0, y: 0 };
-      pointWobble[state.dragging.index] = {
-        x: delta.x * 0.9,
-        y: delta.y * 0.9,
-        t: state.now,
-      };
-    } else {
-      pointWobble[state.dragging.index] = { x: 0, y: 0, t: 0 };
-    }
-  }
-  if (state.dragging && state.dragging.type === "rotate") {
-    const moved = distance(state.dragging.origin, state.dragging.last || state.dragging.origin);
-    if (moved < 6 && !wasBreathing) {
-      if (event.pointerType === "touch") {
-        const now = state.now;
-        const tap = state.tapPending;
-        const sameSpot = tap && distance({ x: tap.x, y: tap.y }, { x: event.clientX, y: event.clientY }) < 25;
-        if (tap && now - tap.t < 320 && sameSpot) {
-          window.clearTimeout(tap.timer);
-          state.tapPending = null;
-          const { index, dist } = closestEdge({ x: event.clientX, y: event.clientY }, shapePoints);
-          if (dist < 40) {
-            const margin = 24;
-            const bounded = {
-              x: clamp(event.clientX, margin, width - margin),
-              y: clamp(event.clientY, margin, height - margin),
-            };
-            shapePoints.splice(index, 0, bounded);
-            pointTargets.splice(index, 0, null);
-            pointAge.splice(index, 0, 0);
-            pointWobble.splice(index, 0, { x: 0, y: 0, t: 0 });
-            state.phaseBloom = 1;
-          }
-        } else {
-          const timer = window.setTimeout(() => {
-            seeds.push({
-              x: event.clientX,
-              y: event.clientY,
-              t: state.now,
-              duration: 2.6,
-              radius: 10,
-            });
-            state.tapPending = null;
-          }, 320);
-          state.tapPending = { t: now, x: event.clientX, y: event.clientY, timer };
         }
       } else {
-        seeds.push({
-          x: event.clientX,
-          y: event.clientY,
-          t: state.now,
-          duration: 2.6,
-          radius: 10,
-        });
-      }
-    } else {
-      pushMemory();
-    }
-  }
-  state.dragging = null;
-});
-
-canvas.addEventListener("contextmenu", (event) => {
-  event.preventDefault();
-});
-
-canvas.addEventListener("dblclick", (event) => {
-  const position = { x: event.clientX, y: event.clientY };
-  const { index, dist } = closestEdge(position, shapePoints);
-  if (dist < 40) {
-    const margin = 24;
-    const bounded = {
-      x: clamp(position.x, margin, width - margin),
-      y: clamp(position.y, margin, height - margin),
-    };
-    shapePoints.splice(index, 0, bounded);
-    pointTargets.splice(index, 0, null);
-    pointAge.splice(index, 0, 0);
-    pointWobble.splice(index, 0, { x: 0, y: 0, t: 0 });
-    state.phaseBloom = 1;
-  }
-});
-
-canvas.addEventListener("contextmenu", (event) => {
-  event.preventDefault();
-  const position = { x: event.clientX, y: event.clientY };
-
-  if (shapePoints.length > 3) {
-    const idx = pickPoint(position, shapePoints);
-    if (idx >= 0) {
-      shapePoints.splice(idx, 1);
-      pointTargets.splice(idx, 1);
-      pointAge.splice(idx, 1);
-      pointWobble.splice(idx, 1);
-      if (state.lastTouch.index === idx) {
-        state.lastTouch = { index: -1, t: 0 };
+        pushMemory();
       }
     }
+    state.dragging = null;
+    return;
   }
-});
 
-window.addEventListener("resize", () => {
-  resize();
+  if (type === "dblclick") {
+    const { index, dist } = closestEdge(position, shapePoints);
+    if (dist < 40) {
+      const margin = 24;
+      const bounded = {
+        x: clamp(position.x, margin, width - margin),
+        y: clamp(position.y, margin, height - margin),
+      };
+      shapePoints.splice(index, 0, bounded);
+      pointTargets.splice(index, 0, null);
+      pointAge.splice(index, 0, 0);
+      pointWobble.splice(index, 0, { x: 0, y: 0, t: 0 });
+      state.phaseBloom = 1;
+    }
+  }
+}
+
+function init(nextHost) {
+  host = nextHost;
+  canvas = host.canvas;
+  ctx = host.ctx;
+  volumeControl = host.ui ? host.ui.volume : null;
+  pendingVolume = volumeControl ? Number(volumeControl.value) : pendingVolume;
+  if (volumeControl) {
+    volumeControl.addEventListener("input", (event) => {
+      pendingVolume = Number(event.target.value);
+      if (masterGain) {
+        masterGain.gain.value = pendingVolume * 0.1;
+      }
+    });
+  }
+  ensureFoldState();
+}
+
+function onResize(width, height, ratio) {
+  resize(width, height, ratio);
   resetTurtle();
-});
+}
 
-resize();
-resetTurtle();
-ensureFoldState();
-setActiveDomain(state.domain.id);
-requestAnimationFrame(animate);
+function onEnter() {
+  resetTurtle();
+}
+
+function onExit() {
+  state.dragging = null;
+}
+
+function getSnapshot() {
+  return {
+    points: shapePoints.map((point) => ({ x: point.x, y: point.y })),
+    rotation: state.rotation,
+    detected: state.detected,
+    domain: state.domain.id,
+  };
+}
+
+function loadSnapshot(snapshot) {
+  if (!snapshot || !Array.isArray(snapshot.points)) return;
+  shapePoints.length = 0;
+  snapshot.points.forEach((pt) => shapePoints.push({ x: pt.x, y: pt.y }));
+  state.rotation = snapshot.rotation || 0;
+  resetTurtle();
+}
+
+return {
+  id: state.domain.id,
+  name: state.domain.id === "fold" ? "Fold" : "Geometry",
+  init,
+  onEnter,
+  onExit,
+  update,
+  render,
+  onPointer,
+  getSnapshot,
+  loadSnapshot,
+};
+}
+
+window.GeometryWorld = createOrigamoWorld("geometry");
+window.FoldWorld = createOrigamoWorld("fold");

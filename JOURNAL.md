@@ -40,3 +40,9 @@
 - Added a subtle hinge offset for a paper-depth cue on the folded side.
 - Removed the tracer in Fold and replaced it with a soft paper-fiber drift layer.
 - Adjusted long-press delete to avoid accidental trackpad deletions while keeping the gesture.
+
+## 2026-01-31
+- Introduced a host shell (`app_host.js`) with world switching and transitions.
+- Refactored Origamo geometry/fold into `worlds/origamo_world.js` with a world interface.
+- Added `worlds/quantum_world.js` (quantum fog, observation collapse, pulses, barriers, tunneling).
+- Updated UI world strip to Geometry / Fold / Quantum.

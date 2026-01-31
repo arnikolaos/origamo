@@ -21,7 +21,6 @@ The shape you edit is not the drawn path; it drives the tracing machine.
 ## Worlds
 - Use the bottom world strip to switch between worlds.
 - World changes keep your shape and trace; only the interpretation changes.
-- Press and hold empty space to open the radial world wheel, then release on a world.
 
 ## Sound
 - Sound is meditative; it responds to motion and symmetry.
@@ -60,6 +59,12 @@ The shape you edit is not the drawn path; it drives the tracing machine.
 - High symmetry locks into a stable fold with a soft snap ring.
 - A quiet paper-click sound confirms a stable fold.
 - Low stability adds subtle wrinkles that fade as balance returns.
+
+## Quantum World Notes
+- Hold to observe and collapse the cloud; release to let it spread.
+- Double-tap/click to inject a pulse and increase energy.
+- Hold Shift and drag to place a barrier (desktop).
+- Barriers allow occasional tunneling when the cloud is energetic.
 
 ## Tips
 - Try building symmetry slowly; the system rewards it with subtle cues.
