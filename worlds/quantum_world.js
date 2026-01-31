@@ -175,18 +175,23 @@
     state.flashes.forEach((flash) => {
       const age = (state.now - flash.t) / 1000;
       if (age > 0.6) return;
-      const alpha = (1 - age / 0.6) * 0.8;
+      const alpha = (1 - age / 0.6) * 0.5;
+      const radius = 10 + age * 18;
       ctx.save();
-      ctx.strokeStyle = `rgba(255, 255, 255, ${alpha})`;
-      ctx.lineWidth = 1.4;
+      const gradient = ctx.createRadialGradient(
+        flash.x,
+        flash.y,
+        0,
+        flash.x,
+        flash.y,
+        radius
+      );
+      gradient.addColorStop(0, `rgba(255, 255, 255, ${alpha})`);
+      gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
+      ctx.fillStyle = gradient;
       ctx.beginPath();
-      ctx.moveTo(flash.x - 10, flash.y);
-      ctx.lineTo(flash.x + 10, flash.y);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(flash.x, flash.y - 10);
-      ctx.lineTo(flash.x, flash.y + 10);
-      ctx.stroke();
+      ctx.arc(flash.x, flash.y, radius, 0, TAU);
+      ctx.fill();
       ctx.restore();
     });
   }
