@@ -61,11 +61,10 @@ The shape you edit is not the drawn path; it drives the tracing machine.
 - Low stability adds subtle wrinkles that fade as balance returns.
 
 ## Quantum World Notes
-- Hold to observe and collapse the cloud; release to let it spread.
-- Double-tap/click to inject a pulse and increase energy.
-- Hold Shift and drag to place a barrier (desktop).
-- Barriers allow occasional tunneling when the cloud is energetic.
-- A scanner ring shows observation focus even when not collapsing.
+- Hold to observe and collapse the orbital; release to let it spread.
+- Drag while holding to move the orbital center.
+- Single tap triggers a measurement flash (particle-like event).
+- Double-tap cycles orbital type (s → p → d) and emits photon waves.
 - Gallery dots appear after coherence snaps; tap to restore.
 
 ## Tips

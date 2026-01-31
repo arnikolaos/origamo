@@ -15,89 +15,88 @@
     return Math.sqrt(-2 * Math.log(u)) * Math.cos(TAU * v);
   }
 
-  function distance(a, b) {
-    return Math.hypot(a.x - b.x, a.y - b.y);
-  }
-
-  function signedDistanceToLine(point, line) {
-    const dx = line.bx - line.ax;
-    const dy = line.by - line.ay;
-    const len = Math.hypot(dx, dy) || 1;
-    const nx = -dy / len;
-    const ny = dx / len;
-    const apx = point.x - line.ax;
-    const apy = point.y - line.ay;
-    return apx * nx + apy * ny;
-  }
-
-  function reflectPointAcrossLine(point, line) {
-    const dx = line.bx - line.ax;
-    const dy = line.by - line.ay;
-    const len = Math.hypot(dx, dy) || 1;
-    const nx = -dy / len;
-    const ny = dx / len;
-    const apx = point.x - line.ax;
-    const apy = point.y - line.ay;
-    const s = apx * nx + apy * ny;
-    return { x: point.x - 2 * s * nx, y: point.y - 2 * s * ny };
+  function rotate(point, angle) {
+    const c = Math.cos(angle);
+    const s = Math.sin(angle);
+    return { x: point.x * c - point.y * s, y: point.x * s + point.y * c };
   }
 
   const state = {
     width: 0,
     height: 0,
     now: performance.now(),
-    clouds: [],
-    barriers: [],
-    pulses: [],
-    snaps: [],
+    orbital: {
+      type: "p",
+      angle: 0,
+      energy: 0.3,
+      collapse: 0,
+      center: { x: 0, y: 0 },
+      size: 1,
+    },
+    photons: [],
+    flashes: [],
+    pointer: { x: 0, y: 0, down: false },
+    tapPending: null,
+    measureTimer: null,
+    fieldCanvas: null,
+    fieldCtx: null,
+    fieldSize: 200,
     coherence: 0,
     lastSnap: 0,
-    pointer: { x: 0, y: 0, down: false, mode: "observe" },
-    dragLine: null,
-    tapPending: null,
   };
 
   let host = null;
   let canvas = null;
   let ctx = null;
 
-  function initClouds() {
-    const center = { x: state.width * 0.5, y: state.height * 0.5 };
-    state.clouds = [
-      {
-        mx: center.x,
-        my: center.y,
-        sigma: Math.min(state.width, state.height) * 0.12,
-        sigma0: Math.min(state.width, state.height) * 0.12,
-        vx: 12,
-        vy: -8,
-        phase: Math.random() * TAU,
-        energy: 0.4,
-        collapsed: false,
-        collapseT: 0,
-      },
-    ];
+  function initFieldBuffer() {
+    state.fieldCanvas = document.createElement("canvas");
+    state.fieldCanvas.width = state.fieldSize;
+    state.fieldCanvas.height = state.fieldSize;
+    state.fieldCtx = state.fieldCanvas.getContext("2d");
+  }
+
+  function setCenter() {
+    state.orbital.center.x = state.width * 0.5;
+    state.orbital.center.y = state.height * 0.55;
+    state.orbital.size = Math.min(state.width, state.height) * 0.22;
+  }
+
+  function orbitalField(x, y, type, angle) {
+    const r = Math.hypot(x, y) || 1;
+    let value = 0;
+    if (type === "s") {
+      value = Math.exp(-r * 1.6);
+    } else if (type === "p") {
+      const rot = rotate({ x, y }, angle);
+      value = Math.abs(rot.x) * Math.exp(-r * 1.8);
+    } else if (type === "d") {
+      const rot = rotate({ x, y }, angle);
+      const lobes = Math.abs(rot.x * rot.y);
+      value = lobes * Math.exp(-r * 2.0);
+    }
+    return value;
   }
 
   function drawBackground() {
     const gradient = ctx.createRadialGradient(
-      state.width * 0.25,
+      state.width * 0.4,
       state.height * 0.2,
       state.width * 0.1,
-      state.width * 0.5,
-      state.height * 0.55,
+      state.width * 0.55,
+      state.height * 0.6,
       state.width * 0.9
     );
-    gradient.addColorStop(0, "rgba(70, 10, 48, 0.95)");
-    gradient.addColorStop(0.5, "rgba(26, 3, 20, 0.98)");
-    gradient.addColorStop(1, "rgba(8, 2, 8, 1)");
+    gradient.addColorStop(0, "rgba(18, 22, 30, 1)");
+    gradient.addColorStop(0.6, "rgba(6, 8, 14, 1)");
+    gradient.addColorStop(1, "rgba(2, 3, 6, 1)");
     ctx.fillStyle = gradient;
     ctx.fillRect(0, 0, state.width, state.height);
 
     ctx.save();
-    ctx.strokeStyle = "rgba(255, 103, 179, 0.05)";
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.02)";
     ctx.lineWidth = 1;
-    const step = 60;
+    const step = 80;
     for (let x = 0; x < state.width; x += step) {
       ctx.beginPath();
       ctx.moveTo(x, 0);
@@ -113,297 +112,188 @@
     ctx.restore();
   }
 
-  function drawCloud(cloud) {
-    const samples = 90;
-    const alpha = cloud.collapsed ? 0.06 : 0.035;
-    ctx.save();
-    for (let i = 0; i < samples; i += 1) {
-      const gx = randNormal() * cloud.sigma;
-      const gy = randNormal() * cloud.sigma;
-      const x = cloud.mx + gx;
-      const y = cloud.my + gy;
-      ctx.fillStyle = `rgba(255, 103, 179, ${alpha})`;
-      ctx.beginPath();
-      ctx.arc(x, y, 2.2, 0, TAU);
-      ctx.fill();
-    }
+  function renderOrbitalField() {
+    const buffer = state.fieldCtx;
+    const size = state.fieldSize;
+    const image = buffer.createImageData(size, size);
+    const data = image.data;
+    const type = state.orbital.type;
+    const angle = state.orbital.angle;
+    const collapse = state.orbital.collapse;
+    const intensity = 0.9 + collapse * 0.6;
 
-    if (cloud.collapsed) {
-      ctx.fillStyle = "rgba(255, 213, 232, 0.9)";
-      ctx.beginPath();
-      ctx.arc(cloud.mx, cloud.my, 4.4, 0, TAU);
-      ctx.fill();
-      ctx.strokeStyle = "rgba(127, 232, 255, 0.5)";
-      ctx.lineWidth = 1.4;
-      ctx.beginPath();
-      ctx.arc(cloud.mx, cloud.my, 18, 0, TAU);
-      ctx.stroke();
-    }
-    ctx.restore();
-  }
-
-  function drawPointerRing() {
-    const ringAlpha = state.pointer.down ? 0.45 : 0.2;
-    const radius = state.pointer.down ? 34 : 24;
-    ctx.save();
-    ctx.strokeStyle = `rgba(255, 213, 232, ${ringAlpha})`;
-    ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    ctx.arc(state.pointer.x, state.pointer.y, radius, 0, TAU);
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  function closestPointOnSegment(point, a, b) {
-    const abx = b.x - a.x;
-    const aby = b.y - a.y;
-    const apx = point.x - a.x;
-    const apy = point.y - a.y;
-    const denom = abx * abx + aby * aby || 1;
-    const t = clamp((apx * abx + apy * aby) / denom, 0, 1);
-    return { x: a.x + abx * t, y: a.y + aby * t, t };
-  }
-
-  function drawBarriers() {
-    const cloud = state.clouds[0];
-    state.barriers.forEach((barrier) => {
-      const strength = clamp(barrier.thickness, 0.2, 1);
-      ctx.save();
-      ctx.strokeStyle = `rgba(255, 213, 232, ${0.35 + strength * 0.4})`;
-      ctx.lineWidth = 1.2 + strength * 1.6;
-      ctx.beginPath();
-      ctx.moveTo(barrier.ax, barrier.ay);
-      ctx.lineTo(barrier.bx, barrier.by);
-      ctx.stroke();
-      const dist = Math.abs(signedDistanceToLine({ x: cloud.mx, y: cloud.my }, barrier));
-      const shimmer = clamp(1 - dist / (cloud.sigma * 0.9), 0, 1);
-      if (shimmer > 0.2) {
-        const closest = closestPointOnSegment(
-          { x: cloud.mx, y: cloud.my },
-          { x: barrier.ax, y: barrier.ay },
-          { x: barrier.bx, y: barrier.by }
-        );
-        ctx.fillStyle = `rgba(127, 232, 255, ${shimmer * 0.35})`;
-        ctx.beginPath();
-        ctx.arc(closest.x, closest.y, 4 + shimmer * 4, 0, TAU);
-        ctx.fill();
+    for (let y = 0; y < size; y += 1) {
+      for (let x = 0; x < size; x += 1) {
+        const nx = (x / size - 0.5) * 2;
+        const ny = (y / size - 0.5) * 2;
+        const r = Math.hypot(nx, ny);
+        const field = orbitalField(nx * 1.2, ny * 1.2, type, angle);
+        const density = clamp(field * intensity * (1 - r * 0.15), 0, 1);
+        const idx = (y * size + x) * 4;
+        data[idx] = 230; // R
+        data[idx + 1] = 235; // G
+        data[idx + 2] = 255; // B
+        data[idx + 3] = Math.floor(density * 255);
       }
-      if (barrier.leak && state.now - barrier.leak < 600) {
-        const t = (state.now - barrier.leak) / 600;
-        const alpha = (1 - t) * 0.5;
-        ctx.strokeStyle = `rgba(127, 232, 255, ${alpha})`;
-        ctx.lineWidth = 2;
+    }
+    buffer.putImageData(image, 0, 0);
+
+    const targetSize = state.orbital.size * (1 - collapse * 0.3);
+    const x = state.orbital.center.x - targetSize * 0.5;
+    const y = state.orbital.center.y - targetSize * 0.5;
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    ctx.globalAlpha = 0.85;
+    ctx.drawImage(state.fieldCanvas, x, y, targetSize, targetSize);
+    ctx.restore();
+  }
+
+  function drawPhotonWaves() {
+    ctx.save();
+    state.photons.forEach((photon) => {
+      const age = (state.now - photon.t) / 1000;
+      if (age > photon.life) return;
+      const alpha = (1 - age / photon.life) * 0.25;
+      const offset = age * photon.speed;
+      ctx.strokeStyle = `rgba(120, 190, 255, ${alpha})`;
+      ctx.lineWidth = 1;
+      for (let i = -2; i <= 2; i += 1) {
+        const shift = i * 18;
         ctx.beginPath();
-        ctx.moveTo(barrier.ax, barrier.ay);
-        ctx.lineTo(barrier.bx, barrier.by);
+        for (let x = 0; x <= state.width; x += 40) {
+          const y = state.height * 0.5 + Math.sin((x + offset + shift) * 0.02) * 18 + i * 12;
+          if (x === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
         ctx.stroke();
       }
-      ctx.restore();
     });
+    ctx.restore();
   }
 
-  function drawPulses() {
-    state.pulses.forEach((pulse) => {
-      const age = (state.now - pulse.t) / 1000;
-      if (age > 1.2) return;
-      const radius = pulse.radius + age * pulse.radius * 2.4;
-      const alpha = (1 - age / 1.2) * 0.5;
+  function drawFlashes() {
+    state.flashes.forEach((flash) => {
+      const age = (state.now - flash.t) / 1000;
+      if (age > 0.6) return;
+      const alpha = (1 - age / 0.6) * 0.8;
       ctx.save();
-      ctx.strokeStyle = `rgba(255, 103, 179, ${alpha})`;
+      ctx.strokeStyle = `rgba(255, 255, 255, ${alpha})`;
       ctx.lineWidth = 1.4;
       ctx.beginPath();
-      ctx.arc(pulse.x, pulse.y, radius, 0, TAU);
+      ctx.moveTo(flash.x - 10, flash.y);
+      ctx.lineTo(flash.x + 10, flash.y);
       ctx.stroke();
-      ctx.strokeStyle = `rgba(127, 232, 255, ${alpha * 0.6})`;
       ctx.beginPath();
-      ctx.arc(pulse.x, pulse.y, radius * 1.2, 0, TAU);
+      ctx.moveTo(flash.x, flash.y - 10);
+      ctx.lineTo(flash.x, flash.y + 10);
       ctx.stroke();
       ctx.restore();
     });
   }
 
-  function drawSnapEffects() {
-    state.snaps.forEach((snap) => {
-      const age = (state.now - snap.t) / 1000;
-      if (age > 1.2) return;
-      const progress = age / 1.2;
-      const alpha = (1 - progress) * 0.4;
-      const radius = snap.radius + progress * snap.radius * 1.8;
-      ctx.save();
-      ctx.strokeStyle = `rgba(255, 213, 232, ${alpha})`;
-      ctx.lineWidth = 1.6;
-      ctx.beginPath();
-      ctx.arc(snap.x, snap.y, radius, 0, TAU);
-      ctx.stroke();
-      ctx.restore();
-    });
-  }
-
-  function updateCloud(cloud, dt) {
-    const drift = 0.05 + cloud.energy * 0.12;
-    cloud.mx += cloud.vx * drift * dt;
-    cloud.my += cloud.vy * drift * dt;
-
-    if (cloud.mx < 40 || cloud.mx > state.width - 40) cloud.vx *= -1;
-    if (cloud.my < 40 || cloud.my > state.height - 40) cloud.vy *= -1;
-
-    const observe = state.pointer.down && state.pointer.mode === "observe";
-    const pointerPos = { x: state.pointer.x, y: state.pointer.y };
-    const dist = distance(pointerPos, { x: cloud.mx, y: cloud.my });
-    const inRange = dist < cloud.sigma;
-
-    if (observe && inRange) {
-      cloud.collapsed = true;
-      cloud.collapseT = clamp(cloud.collapseT + dt * 2.4, 0, 1);
-      cloud.sigma = lerp(cloud.sigma, cloud.sigma0 * 0.25, 0.12);
-      cloud.mx = lerp(cloud.mx, pointerPos.x, 0.06);
-      cloud.my = lerp(cloud.my, pointerPos.y, 0.06);
-    } else {
-      cloud.collapsed = false;
-      cloud.collapseT = clamp(cloud.collapseT - dt * 1.4, 0, 1);
-      cloud.sigma = lerp(cloud.sigma, cloud.sigma0 * (0.9 + cloud.energy * 0.4), 0.04);
+  function sampleOrbitalPoint() {
+    const type = state.orbital.type;
+    const angle = state.orbital.angle;
+    let x = 0;
+    let y = 0;
+    for (let i = 0; i < 12; i += 1) {
+      x = randNormal() * 0.6;
+      y = randNormal() * 0.6;
+      const field = orbitalField(x, y, type, angle);
+      if (Math.random() < field * 1.8) break;
     }
-
-    const tunnelBase = 0.08 * cloud.energy * (cloud.sigma / cloud.sigma0);
-    state.barriers.forEach((barrier) => {
-      const s = signedDistanceToLine({ x: cloud.mx, y: cloud.my }, barrier);
-      const distTo = Math.abs(s);
-      if (distTo > cloud.sigma * 0.8) return;
-      const chance = tunnelBase * barrier.permeability / barrier.thickness;
-      if (Math.random() < chance * dt) {
-        const reflected = reflectPointAcrossLine({ x: cloud.mx, y: cloud.my }, barrier);
-        cloud.mx = lerp(cloud.mx, reflected.x, 0.7);
-        cloud.my = lerp(cloud.my, reflected.y, 0.7);
-        barrier.leak = state.now;
-      }
-    });
-
-    cloud.energy = lerp(cloud.energy, 0.35, dt * 0.5);
-    cloud.phase += dt * (0.6 + cloud.energy * 0.4);
+    return {
+      x: state.orbital.center.x + x * state.orbital.size * 0.45,
+      y: state.orbital.center.y + y * state.orbital.size * 0.45,
+    };
   }
 
   function update(dt, now) {
     state.now = now;
-    state.clouds.forEach((cloud) => updateCloud(cloud, dt));
 
-    for (let i = state.pulses.length - 1; i >= 0; i -= 1) {
-      if (state.now - state.pulses[i].t > 1400) state.pulses.splice(i, 1);
-    }
-    for (let i = state.snaps.length - 1; i >= 0; i -= 1) {
-      if (state.now - state.snaps[i].t > 1400) state.snaps.splice(i, 1);
-    }
+    const targetCollapse = state.pointer.down ? 1 : 0;
+    state.orbital.collapse = lerp(state.orbital.collapse, targetCollapse, dt * 2.2);
 
-    const cloud = state.clouds[0];
-    const kinetic = Math.hypot(cloud.vx, cloud.vy) * 0.01 + Math.abs(cloud.sigma - cloud.sigma0) * 0.002;
-    if (kinetic < 0.25) {
+    state.orbital.angle += dt * (0.15 + state.orbital.energy * 0.5);
+    state.orbital.energy = lerp(state.orbital.energy, 0.3, dt * 0.4);
+
+    state.photons.forEach((photon) => {
+      photon.phase += dt;
+    });
+    state.photons = state.photons.filter((photon) => state.now - photon.t < photon.life * 1000);
+
+    state.flashes = state.flashes.filter((flash) => state.now - flash.t < 700);
+
+    const kinetic = Math.abs(state.orbital.collapse - targetCollapse) + Math.abs(state.orbital.energy - 0.3);
+    if (kinetic < 0.08) {
       state.coherence = clamp(state.coherence + dt, 0, 1.4);
     } else {
-      state.coherence = Math.max(0, state.coherence - dt * 1.2);
+      state.coherence = Math.max(0, state.coherence - dt * 1.1);
     }
+
     if (state.coherence > 1.2 && state.now - state.lastSnap > 2000) {
       state.lastSnap = state.now;
-      state.snaps.push({
-        x: cloud.mx,
-        y: cloud.my,
-        t: state.now,
-        radius: cloud.sigma * 0.45,
-      });
       host.saveSnapshot && host.saveSnapshot(world, world.getSnapshot());
     }
 
     host.setHud({
       world: "quantum",
-      points: state.barriers.length,
-      signal: cloud.collapsed ? "collapse" : "fog",
+      points: state.photons.length,
+      signal: `${state.orbital.type}-orbital ${state.pointer.down ? "observe" : "free"}`,
     });
   }
 
   function render() {
     drawBackground();
-    drawPointerRing();
-    drawBarriers();
-    drawPulses();
-    state.clouds.forEach(drawCloud);
-    drawSnapEffects();
-
-    if (state.coherence > 1.2) {
-      const c = state.clouds[0];
-      ctx.save();
-      ctx.strokeStyle = "rgba(255, 213, 232, 0.25)";
-      ctx.lineWidth = 1.6;
-      ctx.beginPath();
-      ctx.arc(c.mx, c.my, c.sigma * 0.5, 0, TAU);
-      ctx.stroke();
-      ctx.restore();
-    }
-
-    if (state.dragLine) {
-      ctx.save();
-      ctx.strokeStyle = "rgba(255, 213, 232, 0.6)";
-      ctx.lineWidth = 1.4;
-      ctx.beginPath();
-      ctx.moveTo(state.dragLine.ax, state.dragLine.ay);
-      ctx.lineTo(state.dragLine.bx, state.dragLine.by);
-      ctx.stroke();
-      ctx.restore();
-    }
+    drawPhotonWaves();
+    renderOrbitalField();
+    drawFlashes();
   }
 
-  function onPointer(type, x, y, data = {}) {
+  function onPointer(type, x, y) {
     if (type === "down") {
       state.pointer.down = true;
       state.pointer.x = x;
       state.pointer.y = y;
-      if (data.shiftKey) {
-        state.pointer.mode = "barrier";
-        state.dragLine = { ax: x, ay: y, bx: x, by: y };
-      } else {
-        state.pointer.mode = "observe";
-      }
       return;
     }
     if (type === "move") {
       state.pointer.x = x;
       state.pointer.y = y;
-      if (state.pointer.mode === "barrier" && state.dragLine) {
-        state.dragLine.bx = x;
-        state.dragLine.by = y;
+      if (state.pointer.down) {
+        state.orbital.center.x = lerp(state.orbital.center.x, x, 0.05);
+        state.orbital.center.y = lerp(state.orbital.center.y, y, 0.05);
       }
       return;
     }
     if (type === "up") {
-      if (state.pointer.mode === "barrier" && state.dragLine) {
-        const len = Math.hypot(state.dragLine.bx - state.dragLine.ax, state.dragLine.by - state.dragLine.ay);
-        if (len > 40) {
-          state.barriers.push({
-            ax: state.dragLine.ax,
-            ay: state.dragLine.ay,
-            bx: state.dragLine.bx,
-            by: state.dragLine.by,
-            thickness: 0.6,
-            permeability: 0.5,
-          });
-        }
-        state.dragLine = null;
-      } else {
-        const now = state.now;
-        const tap = state.tapPending;
-        const sameSpot = tap && Math.hypot(tap.x - x, tap.y - y) < 25;
-        if (tap && now - tap.t < 320 && sameSpot) {
-          const cloud = state.clouds[0];
-          cloud.energy = clamp(cloud.energy + 0.5, 0, 1);
-          cloud.sigma = cloud.sigma0 * (1.2 + cloud.energy * 0.6);
-          state.pulses.push({ x, y, t: now, radius: 20 });
-          state.tapPending = null;
-        } else {
-          const timer = window.setTimeout(() => {
-            state.tapPending = null;
-          }, 320);
-          state.tapPending = { t: now, x, y, timer };
-        }
-      }
       state.pointer.down = false;
-      state.pointer.mode = "observe";
+      const now = state.now;
+      const tap = state.tapPending;
+      const sameSpot = tap && Math.hypot(tap.x - x, tap.y - y) < 25;
+      if (tap && now - tap.t < 320 && sameSpot) {
+        if (state.measureTimer) {
+          window.clearTimeout(state.measureTimer);
+          state.measureTimer = null;
+        }
+        state.orbital.energy = clamp(state.orbital.energy + 0.4, 0, 1);
+        state.orbital.type = state.orbital.type === "s" ? "p" : state.orbital.type === "p" ? "d" : "s";
+        state.photons.push({ t: now, life: 2.2, speed: 24, phase: 0 });
+        const hit = sampleOrbitalPoint();
+        state.flashes.push({ x: hit.x, y: hit.y, t: now });
+        state.tapPending = null;
+      } else {
+        const timer = window.setTimeout(() => {
+          state.tapPending = null;
+        }, 320);
+        state.tapPending = { t: now, x, y, timer };
+        state.measureTimer = window.setTimeout(() => {
+          const hit = sampleOrbitalPoint();
+          state.flashes.push({ x: hit.x, y: hit.y, t: state.now });
+          state.orbital.collapse = Math.max(state.orbital.collapse, 0.6);
+        }, 320);
+      }
+      return;
     }
   }
 
@@ -411,54 +301,42 @@
     host = nextHost;
     canvas = host.canvas;
     ctx = host.ctx;
-    initClouds();
+    initFieldBuffer();
+    setCenter();
   }
 
   function onResize(width, height) {
     state.width = width;
     state.height = height;
-    initClouds();
+    setCenter();
   }
 
   function getSnapshot() {
     return {
-      clouds: state.clouds.map((cloud) => ({
-        mx: cloud.mx,
-        my: cloud.my,
-        sigma: cloud.sigma,
-        energy: cloud.energy,
-        phase: cloud.phase,
-      })),
-      barriers: state.barriers.map((barrier) => ({
-        ax: barrier.ax,
-        ay: barrier.ay,
-        bx: barrier.bx,
-        by: barrier.by,
-        thickness: barrier.thickness,
-        permeability: barrier.permeability,
-      })),
+      orbital: {
+        type: state.orbital.type,
+        angle: state.orbital.angle,
+        energy: state.orbital.energy,
+      },
+      photons: state.photons.map((p) => ({ life: p.life, speed: p.speed, phase: p.phase })),
       t: Date.now(),
     };
   }
 
   function loadSnapshot(snapshot) {
     if (!snapshot) return;
-    if (Array.isArray(snapshot.clouds)) {
-      state.clouds = snapshot.clouds.map((cloud) => ({
-        mx: cloud.mx,
-        my: cloud.my,
-        sigma: cloud.sigma,
-        sigma0: cloud.sigma || Math.min(state.width, state.height) * 0.12,
-        vx: 12,
-        vy: -8,
-        phase: cloud.phase || 0,
-        energy: cloud.energy || 0.3,
-        collapsed: false,
-        collapseT: 0,
-      }));
+    if (snapshot.orbital) {
+      state.orbital.type = snapshot.orbital.type || "p";
+      state.orbital.angle = snapshot.orbital.angle || 0;
+      state.orbital.energy = snapshot.orbital.energy || 0.3;
     }
-    if (Array.isArray(snapshot.barriers)) {
-      state.barriers = snapshot.barriers.map((barrier) => ({ ...barrier }));
+    if (Array.isArray(snapshot.photons)) {
+      state.photons = snapshot.photons.map((p) => ({
+        t: state.now,
+        life: p.life || 2,
+        speed: p.speed || 24,
+        phase: p.phase || 0,
+      }));
     }
   }
 

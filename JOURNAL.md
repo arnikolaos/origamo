@@ -46,4 +46,5 @@
 - Refactored Origamo geometry/fold into `worlds/origamo_world.js` with a world interface.
 - Added `worlds/quantum_world.js` (quantum fog, observation collapse, pulses, barriers, tunneling).
 - Updated UI world strip to Geometry / Fold / Quantum.
-- Added scanner ring, leak shimmer cues, coherence snap visuals, and a minimal gallery strip.
+- Added a minimal gallery strip for world snapshots.
+- Rebuilt Quantum as orbital fields + wave/particle duality with no rings/dots/trails.
