@@ -80,29 +80,36 @@
   function orbitalWeight(p, type) {
     const r = Math.hypot(p.x, p.y, p.z) || 1;
     const radial = r * r * Math.exp(-r * 0.9);
-    if (type === "s") return radial;
-    if (type === "p") return radial * (p.z * p.z);
-    if (type === "d") return radial * (p.x * p.y) * (p.x * p.y) + radial * (p.z * p.z - 0.5 * (p.x * p.x + p.y * p.y)) ** 2 * 0.3;
-    return radial;
+    const node = Math.abs(Math.sin(r * 3.4)) * 0.7 + 0.3;
+    if (type === "s") return radial * node;
+    if (type === "p") return radial * node * (p.z * p.z);
+    if (type === "d") {
+      const lobes = (p.x * p.y);
+      return radial * node * (lobes * lobes + (p.z * p.z - 0.5 * (p.x * p.x + p.y * p.y)) ** 2 * 0.6);
+    }
+    return radial * node;
   }
 
+
   function samplePoint(type) {
-    for (let i = 0; i < 20; i += 1) {
+    const shells = type === "s" ? [0.25, 0.65, 1.05] : type === "p" ? [0.5, 1.0] : [0.6, 1.15];
+    for (let i = 0; i < 24; i += 1) {
       const dir = normalize({
         x: randNormal(),
         y: randNormal(),
         z: randNormal(),
       });
-      const r = Math.abs(randNormal()) * 1.6;
+      const shell = shells[Math.floor(Math.random() * shells.length)];
+      const r = Math.abs(randNormal() * 0.08 + shell);
       const p = { x: dir.x * r, y: dir.y * r, z: dir.z * r };
       const w = orbitalWeight(p, type);
-      if (Math.random() < clamp(w * 1.8, 0, 1)) return p;
+      if (Math.random() < clamp(w * 2.2, 0, 1)) return p;
     }
     return { x: 0, y: 0, z: 0 };
   }
 
   function rebuildParticles() {
-    const count = 18000;
+    const count = 26000;
     state.particles = new Array(count);
     for (let i = 0; i < count; i += 1) {
       state.particles[i] = samplePoint(state.orbital.type);
@@ -149,10 +156,10 @@
       z: state.orbital.rot.z,
     };
     const color = state.orbital.type === "s"
-      ? { r: 140, g: 180, b: 255 }
+      ? { r: 120, g: 170, b: 255 }
       : state.orbital.type === "p"
         ? { r: 210, g: 120, b: 255 }
-        : { r: 190, g: 210, b: 120 };
+        : { r: 200, g: 190, b: 90 };
 
     ctx.save();
     ctx.globalCompositeOperation = "lighter";
@@ -161,8 +168,8 @@
       const depth = 1 / (1 + p.z * 0.7);
       const x = center.x + p.x * size * 0.35 * depth;
       const y = center.y + p.y * size * 0.35 * depth;
-      const alpha = clamp(0.08 * depth, 0.02, 0.2);
-      const radius = 1.2 * depth;
+      const alpha = clamp(0.12 * depth, 0.04, 0.35);
+      const radius = 1.6 * depth;
       ctx.fillStyle = `rgba(${color.r}, ${color.g}, ${color.b}, ${alpha})`;
       ctx.beginPath();
       ctx.arc(x, y, radius, 0, TAU);
