@@ -56,6 +56,8 @@
   const orbitalTypes = ["s", "p", "d", "sp", "sp2", "sp3", "f"];
 
   const state = {
+    particleCache: {},
+    lastReseed: 0,
     width: 0,
     height: 0,
     now: performance.now(),
@@ -132,13 +134,21 @@
     return { x: 0, y: 0, z: 0 };
   }
 
-  function rebuildParticles() {
-    const count = 26000;
-    state.particles = new Array(count);
-    for (let i = 0; i < count; i += 1) {
-      state.particles[i] = samplePoint(state.orbital.type);
+    function rebuildParticles(force = false) {
+    const key = state.orbital.type;
+    if (!force && state.particleCache[key]) {
+      state.particles = state.particleCache[key];
+      return;
     }
+    const count = 26000;
+    const list = new Array(count);
+    for (let i = 0; i < count; i += 1) {
+      list[i] = samplePoint(state.orbital.type);
+    }
+    state.particleCache[key] = list;
+    state.particles = list;
   }
+
 
   function drawBackground() {
     const g = ctx.createRadialGradient(

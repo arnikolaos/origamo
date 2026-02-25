@@ -49,3 +49,5 @@
 - Added a minimal gallery strip for world snapshots.
 - Rebuilt Quantum as orbital fields + wave/particle duality with no rings/dots/trails.
 - Fixed Geometry/Fold world resize hook so points initialize correctly.
+
+- Cached particle clouds per orbital and added idle reseed for freshness.
