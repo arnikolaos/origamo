@@ -62,7 +62,7 @@ The shape you edit is not the drawn path; it drives the tracing machine.
 
 ## Quantum World Notes
 - Hold to observe and collapse the orbital; release to let it spread.
-- Drag while holding to move the orbital center.
+- Drag while holding to rotate the orbital.
 - Single tap triggers a measurement flash (particle-like event).
 - Double-tap cycles orbital type (s → p → d) and emits photon waves.
 - Gallery dots appear after coherence snaps; tap to restore.

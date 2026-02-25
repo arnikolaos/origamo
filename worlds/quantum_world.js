@@ -65,17 +65,20 @@
   function orbitalField(x, y, type, angle) {
     const r = Math.hypot(x, y) || 1;
     let value = 0;
+    let sign = 1;
     if (type === "s") {
       value = Math.exp(-r * 1.6);
     } else if (type === "p") {
       const rot = rotate({ x, y }, angle);
       value = Math.abs(rot.x) * Math.exp(-r * 1.8);
+      sign = Math.sign(rot.x) || 1;
     } else if (type === "d") {
       const rot = rotate({ x, y }, angle);
-      const lobes = Math.abs(rot.x * rot.y);
-      value = lobes * Math.exp(-r * 2.0);
+      const lobes = rot.x * rot.y;
+      value = Math.abs(lobes) * Math.exp(-r * 2.0);
+      sign = Math.sign(lobes) || 1;
     }
-    return value;
+    return { density: value, sign };
   }
 
   function drawBackground() {
@@ -122,18 +125,24 @@
     const collapse = state.orbital.collapse;
     const intensity = 0.9 + collapse * 0.6;
 
+    const light = { x: 0.4, y: -0.6 };
     for (let y = 0; y < size; y += 1) {
       for (let x = 0; x < size; x += 1) {
         const nx = (x / size - 0.5) * 2;
         const ny = (y / size - 0.5) * 2;
         const r = Math.hypot(nx, ny);
         const field = orbitalField(nx * 1.2, ny * 1.2, type, angle);
-        const density = clamp(field * intensity * (1 - r * 0.15), 0, 1);
+        const density = clamp(field.density * intensity * (1 - r * 0.15), 0, 1);
+        const normal = { x: nx, y: ny };
+        const lightDot = clamp((normal.x * light.x + normal.y * light.y + 1) * 0.5, 0.4, 1);
+        const shade = density * lightDot;
+        const warm = field.sign > 0 ? 1 : 0.75;
+        const cool = field.sign < 0 ? 1 : 0.8;
         const idx = (y * size + x) * 4;
-        data[idx] = 230; // R
-        data[idx + 1] = 235; // G
-        data[idx + 2] = 255; // B
-        data[idx + 3] = Math.floor(density * 255);
+        data[idx] = Math.floor(210 * warm + 20 * shade);
+        data[idx + 1] = Math.floor(220 * cool + 10 * shade);
+        data[idx + 2] = Math.floor(255 * cool);
+        data[idx + 3] = Math.floor(shade * 255);
       }
     }
     buffer.putImageData(image, 0, 0);
@@ -260,15 +269,20 @@
       state.pointer.down = true;
       state.pointer.x = x;
       state.pointer.y = y;
+      state.pointer.lastX = x;
+      state.pointer.lastY = y;
       return;
     }
     if (type === "move") {
+      const dx = x - (state.pointer.lastX ?? x);
+      const dy = y - (state.pointer.lastY ?? y);
       state.pointer.x = x;
       state.pointer.y = y;
       if (state.pointer.down) {
-        state.orbital.center.x = lerp(state.orbital.center.x, x, 0.05);
-        state.orbital.center.y = lerp(state.orbital.center.y, y, 0.05);
+        state.orbital.angle += dx * 0.01 + dy * 0.004;
       }
+      state.pointer.lastX = x;
+      state.pointer.lastY = y;
       return;
     }
     if (type === "up") {
