@@ -68,7 +68,7 @@ Controls
 - Hold to observe and collapse the orbital; release to let it spread.
 - Drag while holding to rotate the orbital in 3D.
 - Single tap performs a quick measurement.
-- Double-tap cycles orbital type: `s → p → d → s`.
+- Double-tap cycles orbital type: `s → p → d → sp → sp2 → sp3 → f → s`.
 
 Behavior
 - The cloud is a particle sampling of the orbital probability density.

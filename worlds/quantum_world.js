@@ -53,6 +53,8 @@
     return { x, y, z };
   }
 
+  const orbitalTypes = ["s", "p", "d", "sp", "sp2", "sp3", "f"];
+
   const state = {
     width: 0,
     height: 0,
@@ -77,7 +79,7 @@
     state.orbital.size = Math.min(state.width, state.height) * 0.85;
   }
 
-  function orbitalWeight(p, type) {
+    function orbitalWeight(p, type) {
     const r = Math.hypot(p.x, p.y, p.z) || 1;
     const radial = r * r * Math.exp(-r * 0.9);
     const node = Math.abs(Math.sin(r * 3.4)) * 0.7 + 0.3;
@@ -87,12 +89,34 @@
       const lobes = (p.x * p.y);
       return radial * node * (lobes * lobes + (p.z * p.z - 0.5 * (p.x * p.x + p.y * p.y)) ** 2 * 0.6);
     }
+    if (type === "sp") {
+      const lobe = (p.z + p.x) * 0.7;
+      return radial * node * (lobe * lobe);
+    }
+    if (type === "sp2") {
+      const lobe = (p.z * 0.6 + p.x * 0.9 - p.y * 0.2);
+      const lobe2 = (p.z * 0.6 - p.x * 0.6 + p.y * 0.7);
+      return radial * node * (lobe * lobe + lobe2 * lobe2);
+    }
+    if (type === "sp3") {
+      const lobe = (p.x + p.y + p.z) * 0.6;
+      return radial * node * (lobe * lobe);
+    }
+    if (type === "f") {
+      const lobes = p.z * (p.x * p.x - p.y * p.y);
+      return radial * node * (lobes * lobes);
+    }
     return radial * node;
   }
 
 
+
   function samplePoint(type) {
-    const shells = type === "s" ? [0.25, 0.65, 1.05] : type === "p" ? [0.5, 1.0] : [0.6, 1.15];
+    const shells = type === "s" ? [0.25, 0.65, 1.05]
+      : type === "p" ? [0.5, 1.0]
+      : type === "d" ? [0.6, 1.15]
+      : type === "f" ? [0.7, 1.25]
+      : [0.5, 1.0];
     for (let i = 0; i < 24; i += 1) {
       const dir = normalize({
         x: randNormal(),
@@ -159,7 +183,15 @@
       ? { r: 120, g: 170, b: 255 }
       : state.orbital.type === "p"
         ? { r: 210, g: 120, b: 255 }
-        : { r: 200, g: 190, b: 90 };
+        : state.orbital.type === "d"
+          ? { r: 200, g: 190, b: 90 }
+          : state.orbital.type === "sp"
+            ? { r: 180, g: 200, b: 255 }
+            : state.orbital.type === "sp2"
+              ? { r: 160, g: 220, b: 200 }
+              : state.orbital.type === "sp3"
+                ? { r: 200, g: 170, b: 230 }
+                : { r: 190, g: 140, b: 255 };
 
     ctx.save();
     ctx.globalCompositeOperation = "lighter";
@@ -226,7 +258,8 @@
       const tap = state.tapPending;
       const sameSpot = tap && Math.hypot(tap.x - x, tap.y - y) < 25;
       if (tap && now - tap.t < 320 && sameSpot) {
-        state.orbital.type = state.orbital.type === "s" ? "p" : state.orbital.type === "p" ? "d" : "s";
+        const idx = orbitalTypes.indexOf(state.orbital.type);
+        state.orbital.type = orbitalTypes[(idx + 1) % orbitalTypes.length];
         rebuildParticles();
         state.tapPending = null;
       } else {
