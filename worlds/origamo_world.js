@@ -1889,6 +1889,7 @@ return {
   id: state.domain.id,
   name: state.domain.id === "fold" ? "Fold" : "Geometry",
   init,
+  onResize,
   onEnter,
   onExit,
   update,

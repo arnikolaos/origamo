@@ -48,3 +48,4 @@
 - Updated UI world strip to Geometry / Fold / Quantum.
 - Added a minimal gallery strip for world snapshots.
 - Rebuilt Quantum as orbital fields + wave/particle duality with no rings/dots/trails.
+- Fixed Geometry/Fold world resize hook so points initialize correctly.
