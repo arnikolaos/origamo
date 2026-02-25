@@ -40,7 +40,7 @@
     measureTimer: null,
     fieldCanvas: null,
     fieldCtx: null,
-    fieldSize: 200,
+    fieldSize: 420,
     coherence: 0,
     lastSnap: 0,
   };
@@ -59,7 +59,7 @@
   function setCenter() {
     state.orbital.center.x = state.width * 0.5;
     state.orbital.center.y = state.height * 0.55;
-    state.orbital.size = Math.min(state.width, state.height) * 0.22;
+    state.orbital.size = Math.min(state.width, state.height) * 0.82;
   }
 
   function orbitalField(x, y, type, angle) {
@@ -84,8 +84,8 @@
   function drawBackground() {
     const gradient = ctx.createRadialGradient(
       state.width * 0.4,
-      state.height * 0.2,
-      state.width * 0.1,
+      state.height * 0.22,
+      state.width * 0.22,
       state.width * 0.55,
       state.height * 0.6,
       state.width * 0.9
@@ -97,7 +97,7 @@
     ctx.fillRect(0, 0, state.width, state.height);
 
     ctx.save();
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.02)";
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.012)";
     ctx.lineWidth = 1;
     const step = 80;
     for (let x = 0; x < state.width; x += step) {
@@ -113,6 +113,34 @@
       ctx.stroke();
     }
     ctx.restore();
+
+    ctx.save();
+    const nebulaA = ctx.createRadialGradient(
+      state.width * 0.2,
+      state.height * 0.35,
+      state.width * 0.05,
+      state.width * 0.2,
+      state.height * 0.35,
+      state.width * 0.7
+    );
+    nebulaA.addColorStop(0, "rgba(120, 170, 255, 0.08)");
+    nebulaA.addColorStop(1, "rgba(120, 170, 255, 0)");
+    ctx.fillStyle = nebulaA;
+    ctx.fillRect(0, 0, state.width, state.height);
+
+    const nebulaB = ctx.createRadialGradient(
+      state.width * 0.75,
+      state.height * 0.58,
+      state.width * 0.06,
+      state.width * 0.75,
+      state.height * 0.58,
+      state.width * 0.55
+    );
+    nebulaB.addColorStop(0, "rgba(190, 210, 255, 0.07)");
+    nebulaB.addColorStop(1, "rgba(190, 210, 255, 0)");
+    ctx.fillStyle = nebulaB;
+    ctx.fillRect(0, 0, state.width, state.height);
+    ctx.restore();
   }
 
   function renderOrbitalField() {
@@ -123,7 +151,7 @@
     const type = state.orbital.type;
     const angle = state.orbital.angle;
     const collapse = state.orbital.collapse;
-    const intensity = 0.9 + collapse * 0.6;
+    const intensity = 2.4 + collapse * 0.9;
 
     const light = { x: 0.4, y: -0.6 };
     for (let y = 0; y < size; y += 1) {
@@ -132,28 +160,32 @@
         const ny = (y / size - 0.5) * 2;
         const r = Math.hypot(nx, ny);
         const field = orbitalField(nx * 1.2, ny * 1.2, type, angle);
-        const density = clamp(field.density * intensity * (1 - r * 0.15), 0, 1);
+        const density = clamp(field.density * intensity * (1 - r * 0.1), 0, 1);
         const normal = { x: nx, y: ny };
         const lightDot = clamp((normal.x * light.x + normal.y * light.y + 1) * 0.5, 0.4, 1);
-        const shade = density * lightDot;
+        const shade = clamp(density * lightDot * 1.2, 0, 1);
         const warm = field.sign > 0 ? 1 : 0.75;
         const cool = field.sign < 0 ? 1 : 0.8;
         const idx = (y * size + x) * 4;
-        data[idx] = Math.floor(210 * warm + 20 * shade);
-        data[idx + 1] = Math.floor(220 * cool + 10 * shade);
+        data[idx] = Math.floor(190 * warm + 55 * shade);
+        data[idx + 1] = Math.floor(210 * cool + 30 * shade);
         data[idx + 2] = Math.floor(255 * cool);
         data[idx + 3] = Math.floor(shade * 255);
       }
     }
     buffer.putImageData(image, 0, 0);
 
-    const targetSize = state.orbital.size * (1 - collapse * 0.3);
+    const targetSize = state.orbital.size * (1 - collapse * 0.18);
     const x = state.orbital.center.x - targetSize * 0.5;
     const y = state.orbital.center.y - targetSize * 0.5;
     ctx.save();
     ctx.globalCompositeOperation = "lighter";
-    ctx.globalAlpha = 0.85;
-    ctx.drawImage(state.fieldCanvas, x, y, targetSize, targetSize);
+    for (let i = 0; i < 6; i += 1) {
+      const depth = (i - 2.5) / 3;
+      const offset = depth * 22;
+      ctx.globalAlpha = 0.3 + i * 0.11;
+      ctx.drawImage(state.fieldCanvas, x + offset, y - offset, targetSize, targetSize);
+    }
     ctx.restore();
   }
 
@@ -162,7 +194,7 @@
     state.photons.forEach((photon) => {
       const age = (state.now - photon.t) / 1000;
       if (age > photon.life) return;
-      const alpha = (1 - age / photon.life) * 0.25;
+      const alpha = (1 - age / photon.life) * 0.35;
       const offset = age * photon.speed;
       ctx.strokeStyle = `rgba(120, 190, 255, ${alpha})`;
       ctx.lineWidth = 1;
@@ -214,7 +246,7 @@
       x = randNormal() * 0.6;
       y = randNormal() * 0.6;
       const field = orbitalField(x, y, type, angle);
-      if (Math.random() < field * 1.8) break;
+      if (Math.random() < field.density * 1.8) break;
     }
     return {
       x: state.orbital.center.x + x * state.orbital.size * 0.45,
