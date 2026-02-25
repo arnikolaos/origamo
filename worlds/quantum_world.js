@@ -15,285 +15,180 @@
     return Math.sqrt(-2 * Math.log(u)) * Math.cos(TAU * v);
   }
 
-  function rotate(point, angle) {
-    const c = Math.cos(angle);
-    const s = Math.sin(angle);
-    return { x: point.x * c - point.y * s, y: point.x * s + point.y * c };
+  function normalize(vec) {
+    const len = Math.hypot(vec.x, vec.y, vec.z) || 1;
+    return { x: vec.x / len, y: vec.y / len, z: vec.z / len };
+  }
+
+  function rotate3D(p, rot) {
+    // rotate around x then y then z
+    let x = p.x;
+    let y = p.y;
+    let z = p.z;
+    const cx = Math.cos(rot.x);
+    const sx = Math.sin(rot.x);
+    const cy = Math.cos(rot.y);
+    const sy = Math.sin(rot.y);
+    const cz = Math.cos(rot.z);
+    const sz = Math.sin(rot.z);
+
+    // x-rotation
+    let y1 = y * cx - z * sx;
+    let z1 = y * sx + z * cx;
+    y = y1;
+    z = z1;
+
+    // y-rotation
+    let x2 = x * cy + z * sy;
+    let z2 = -x * sy + z * cy;
+    x = x2;
+    z = z2;
+
+    // z-rotation
+    let x3 = x * cz - y * sz;
+    let y3 = x * sz + y * cz;
+    x = x3;
+    y = y3;
+
+    return { x, y, z };
   }
 
   const state = {
     width: 0,
     height: 0,
     now: performance.now(),
+    particles: [],
     orbital: {
       type: "p",
-      angle: 0,
-      energy: 0.3,
+      energy: 0.4,
       collapse: 0,
-      center: { x: 0, y: 0 },
+      rot: { x: 0.2, y: 0.6, z: 0 },
+      targetRot: { x: 0.2, y: 0.6, z: 0 },
       size: 1,
     },
-    photons: [],
-    flashes: [],
-    pointer: { x: 0, y: 0, down: false },
+    pointer: { x: 0, y: 0, down: false, lastX: 0, lastY: 0 },
     tapPending: null,
-    measureTimer: null,
-    fieldCanvas: null,
-    fieldCtx: null,
-    fieldSize: 420,
-    coherence: 0,
-    lastSnap: 0,
   };
 
   let host = null;
-  let canvas = null;
   let ctx = null;
 
-  function initFieldBuffer() {
-    state.fieldCanvas = document.createElement("canvas");
-    state.fieldCanvas.width = state.fieldSize;
-    state.fieldCanvas.height = state.fieldSize;
-    state.fieldCtx = state.fieldCanvas.getContext("2d");
+  function setSize() {
+    state.orbital.size = Math.min(state.width, state.height) * 0.85;
   }
 
-  function setCenter() {
-    state.orbital.center.x = state.width * 0.5;
-    state.orbital.center.y = state.height * 0.55;
-    state.orbital.size = Math.min(state.width, state.height) * 0.82;
+  function orbitalWeight(p, type) {
+    const r = Math.hypot(p.x, p.y, p.z) || 1;
+    const radial = r * r * Math.exp(-r * 0.9);
+    if (type === "s") return radial;
+    if (type === "p") return radial * (p.z * p.z);
+    if (type === "d") return radial * (p.x * p.y) * (p.x * p.y) + radial * (p.z * p.z - 0.5 * (p.x * p.x + p.y * p.y)) ** 2 * 0.3;
+    return radial;
   }
 
-  function orbitalField(x, y, type, angle) {
-    const r = Math.hypot(x, y) || 1;
-    let value = 0;
-    let sign = 1;
-    if (type === "s") {
-      value = Math.exp(-r * 1.6);
-    } else if (type === "p") {
-      const rot = rotate({ x, y }, angle);
-      value = Math.abs(rot.x) * Math.exp(-r * 1.8);
-      sign = Math.sign(rot.x) || 1;
-    } else if (type === "d") {
-      const rot = rotate({ x, y }, angle);
-      const lobes = rot.x * rot.y;
-      value = Math.abs(lobes) * Math.exp(-r * 2.0);
-      sign = Math.sign(lobes) || 1;
+  function samplePoint(type) {
+    for (let i = 0; i < 20; i += 1) {
+      const dir = normalize({
+        x: randNormal(),
+        y: randNormal(),
+        z: randNormal(),
+      });
+      const r = Math.abs(randNormal()) * 1.6;
+      const p = { x: dir.x * r, y: dir.y * r, z: dir.z * r };
+      const w = orbitalWeight(p, type);
+      if (Math.random() < clamp(w * 1.8, 0, 1)) return p;
     }
-    return { density: value, sign };
+    return { x: 0, y: 0, z: 0 };
+  }
+
+  function rebuildParticles() {
+    const count = 18000;
+    state.particles = new Array(count);
+    for (let i = 0; i < count; i += 1) {
+      state.particles[i] = samplePoint(state.orbital.type);
+    }
   }
 
   function drawBackground() {
-    const gradient = ctx.createRadialGradient(
-      state.width * 0.4,
-      state.height * 0.22,
-      state.width * 0.22,
-      state.width * 0.55,
+    const g = ctx.createRadialGradient(
+      state.width * 0.45,
+      state.height * 0.3,
+      state.width * 0.1,
+      state.width * 0.5,
       state.height * 0.6,
       state.width * 0.9
     );
-    gradient.addColorStop(0, "rgba(18, 22, 30, 1)");
-    gradient.addColorStop(0.6, "rgba(6, 8, 14, 1)");
-    gradient.addColorStop(1, "rgba(2, 3, 6, 1)");
-    ctx.fillStyle = gradient;
+    g.addColorStop(0, "rgba(10, 12, 18, 1)");
+    g.addColorStop(0.6, "rgba(4, 5, 8, 1)");
+    g.addColorStop(1, "rgba(1, 2, 4, 1)");
+    ctx.fillStyle = g;
     ctx.fillRect(0, 0, state.width, state.height);
 
     ctx.save();
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.012)";
-    ctx.lineWidth = 1;
-    const step = 80;
-    for (let x = 0; x < state.width; x += step) {
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, state.height);
-      ctx.stroke();
-    }
-    for (let y = 0; y < state.height; y += step) {
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(state.width, y);
-      ctx.stroke();
-    }
-    ctx.restore();
-
-    ctx.save();
-    const nebulaA = ctx.createRadialGradient(
-      state.width * 0.2,
-      state.height * 0.35,
-      state.width * 0.05,
-      state.width * 0.2,
-      state.height * 0.35,
+    const nebula = ctx.createRadialGradient(
+      state.width * 0.3,
+      state.height * 0.4,
+      state.width * 0.1,
+      state.width * 0.3,
+      state.height * 0.4,
       state.width * 0.7
     );
-    nebulaA.addColorStop(0, "rgba(120, 170, 255, 0.08)");
-    nebulaA.addColorStop(1, "rgba(120, 170, 255, 0)");
-    ctx.fillStyle = nebulaA;
-    ctx.fillRect(0, 0, state.width, state.height);
-
-    const nebulaB = ctx.createRadialGradient(
-      state.width * 0.75,
-      state.height * 0.58,
-      state.width * 0.06,
-      state.width * 0.75,
-      state.height * 0.58,
-      state.width * 0.55
-    );
-    nebulaB.addColorStop(0, "rgba(190, 210, 255, 0.07)");
-    nebulaB.addColorStop(1, "rgba(190, 210, 255, 0)");
-    ctx.fillStyle = nebulaB;
+    nebula.addColorStop(0, "rgba(120, 170, 255, 0.08)");
+    nebula.addColorStop(1, "rgba(120, 170, 255, 0)");
+    ctx.fillStyle = nebula;
     ctx.fillRect(0, 0, state.width, state.height);
     ctx.restore();
   }
 
-  function renderOrbitalField() {
-    const buffer = state.fieldCtx;
-    const size = state.fieldSize;
-    const image = buffer.createImageData(size, size);
-    const data = image.data;
-    const type = state.orbital.type;
-    const angle = state.orbital.angle;
-    const collapse = state.orbital.collapse;
-    const intensity = 2.4 + collapse * 0.9;
+  function drawParticles() {
+    const center = { x: state.width * 0.5, y: state.height * 0.55 };
+    const size = state.orbital.size * (1 - state.orbital.collapse * 0.35);
+    const rot = {
+      x: state.orbital.rot.x,
+      y: state.orbital.rot.y,
+      z: state.orbital.rot.z,
+    };
+    const color = state.orbital.type === "s"
+      ? { r: 140, g: 180, b: 255 }
+      : state.orbital.type === "p"
+        ? { r: 210, g: 120, b: 255 }
+        : { r: 190, g: 210, b: 120 };
 
-    const light = { x: 0.4, y: -0.6 };
-    for (let y = 0; y < size; y += 1) {
-      for (let x = 0; x < size; x += 1) {
-        const nx = (x / size - 0.5) * 2;
-        const ny = (y / size - 0.5) * 2;
-        const r = Math.hypot(nx, ny);
-        const field = orbitalField(nx * 1.2, ny * 1.2, type, angle);
-        const density = clamp(field.density * intensity * (1 - r * 0.1), 0, 1);
-        const normal = { x: nx, y: ny };
-        const lightDot = clamp((normal.x * light.x + normal.y * light.y + 1) * 0.5, 0.4, 1);
-        const shade = clamp(density * lightDot * 1.2, 0, 1);
-        const warm = field.sign > 0 ? 1 : 0.75;
-        const cool = field.sign < 0 ? 1 : 0.8;
-        const idx = (y * size + x) * 4;
-        data[idx] = Math.floor(190 * warm + 55 * shade);
-        data[idx + 1] = Math.floor(210 * cool + 30 * shade);
-        data[idx + 2] = Math.floor(255 * cool);
-        data[idx + 3] = Math.floor(shade * 255);
-      }
-    }
-    buffer.putImageData(image, 0, 0);
-
-    const targetSize = state.orbital.size * (1 - collapse * 0.18);
-    const x = state.orbital.center.x - targetSize * 0.5;
-    const y = state.orbital.center.y - targetSize * 0.5;
     ctx.save();
     ctx.globalCompositeOperation = "lighter";
-    for (let i = 0; i < 6; i += 1) {
-      const depth = (i - 2.5) / 3;
-      const offset = depth * 22;
-      ctx.globalAlpha = 0.3 + i * 0.11;
-      ctx.drawImage(state.fieldCanvas, x + offset, y - offset, targetSize, targetSize);
-    }
-    ctx.restore();
-  }
-
-  function drawPhotonWaves() {
-    ctx.save();
-    state.photons.forEach((photon) => {
-      const age = (state.now - photon.t) / 1000;
-      if (age > photon.life) return;
-      const alpha = (1 - age / photon.life) * 0.35;
-      const offset = age * photon.speed;
-      ctx.strokeStyle = `rgba(120, 190, 255, ${alpha})`;
-      ctx.lineWidth = 1;
-      for (let i = -2; i <= 2; i += 1) {
-        const shift = i * 18;
-        ctx.beginPath();
-        for (let x = 0; x <= state.width; x += 40) {
-          const y = state.height * 0.5 + Math.sin((x + offset + shift) * 0.02) * 18 + i * 12;
-          if (x === 0) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
-        }
-        ctx.stroke();
-      }
-    });
-    ctx.restore();
-  }
-
-  function drawFlashes() {
-    state.flashes.forEach((flash) => {
-      const age = (state.now - flash.t) / 1000;
-      if (age > 0.6) return;
-      const alpha = (1 - age / 0.6) * 0.5;
-      const radius = 10 + age * 18;
-      ctx.save();
-      const gradient = ctx.createRadialGradient(
-        flash.x,
-        flash.y,
-        0,
-        flash.x,
-        flash.y,
-        radius
-      );
-      gradient.addColorStop(0, `rgba(255, 255, 255, ${alpha})`);
-      gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
-      ctx.fillStyle = gradient;
+    for (let i = 0; i < state.particles.length; i += 1) {
+      const p = rotate3D(state.particles[i], rot);
+      const depth = 1 / (1 + p.z * 0.7);
+      const x = center.x + p.x * size * 0.35 * depth;
+      const y = center.y + p.y * size * 0.35 * depth;
+      const alpha = clamp(0.08 * depth, 0.02, 0.2);
+      const radius = 1.2 * depth;
+      ctx.fillStyle = `rgba(${color.r}, ${color.g}, ${color.b}, ${alpha})`;
       ctx.beginPath();
-      ctx.arc(flash.x, flash.y, radius, 0, TAU);
+      ctx.arc(x, y, radius, 0, TAU);
       ctx.fill();
-      ctx.restore();
-    });
-  }
-
-  function sampleOrbitalPoint() {
-    const type = state.orbital.type;
-    const angle = state.orbital.angle;
-    let x = 0;
-    let y = 0;
-    for (let i = 0; i < 12; i += 1) {
-      x = randNormal() * 0.6;
-      y = randNormal() * 0.6;
-      const field = orbitalField(x, y, type, angle);
-      if (Math.random() < field.density * 1.8) break;
     }
-    return {
-      x: state.orbital.center.x + x * state.orbital.size * 0.45,
-      y: state.orbital.center.y + y * state.orbital.size * 0.45,
-    };
+    ctx.restore();
   }
 
   function update(dt, now) {
     state.now = now;
-
     const targetCollapse = state.pointer.down ? 1 : 0;
     state.orbital.collapse = lerp(state.orbital.collapse, targetCollapse, dt * 2.2);
-
-    state.orbital.angle += dt * (0.15 + state.orbital.energy * 0.5);
-    state.orbital.energy = lerp(state.orbital.energy, 0.3, dt * 0.4);
-
-    state.photons.forEach((photon) => {
-      photon.phase += dt;
-    });
-    state.photons = state.photons.filter((photon) => state.now - photon.t < photon.life * 1000);
-
-    state.flashes = state.flashes.filter((flash) => state.now - flash.t < 700);
-
-    const kinetic = Math.abs(state.orbital.collapse - targetCollapse) + Math.abs(state.orbital.energy - 0.3);
-    if (kinetic < 0.08) {
-      state.coherence = clamp(state.coherence + dt, 0, 1.4);
-    } else {
-      state.coherence = Math.max(0, state.coherence - dt * 1.1);
-    }
-
-    if (state.coherence > 1.2 && state.now - state.lastSnap > 2000) {
-      state.lastSnap = state.now;
-      host.saveSnapshot && host.saveSnapshot(world, world.getSnapshot());
-    }
+    state.orbital.rot.x = lerp(state.orbital.rot.x, state.orbital.targetRot.x, dt * 4);
+    state.orbital.rot.y = lerp(state.orbital.rot.y, state.orbital.targetRot.y, dt * 4);
+    state.orbital.rot.z = lerp(state.orbital.rot.z, state.orbital.targetRot.z, dt * 4);
 
     host.setHud({
       world: "quantum",
-      points: state.photons.length,
+      points: state.particles.length,
       signal: `${state.orbital.type}-orbital ${state.pointer.down ? "observe" : "free"}`,
     });
   }
 
   function render() {
     drawBackground();
-    drawPhotonWaves();
-    renderOrbitalField();
-    drawFlashes();
+    drawParticles();
   }
 
   function onPointer(type, x, y) {
@@ -306,12 +201,13 @@
       return;
     }
     if (type === "move") {
-      const dx = x - (state.pointer.lastX ?? x);
-      const dy = y - (state.pointer.lastY ?? y);
+      const dx = x - state.pointer.lastX;
+      const dy = y - state.pointer.lastY;
       state.pointer.x = x;
       state.pointer.y = y;
       if (state.pointer.down) {
-        state.orbital.angle += dx * 0.01 + dy * 0.004;
+        state.orbital.targetRot.y += dx * 0.01;
+        state.orbital.targetRot.x += dy * 0.01;
       }
       state.pointer.lastX = x;
       state.pointer.lastY = y;
@@ -323,26 +219,14 @@
       const tap = state.tapPending;
       const sameSpot = tap && Math.hypot(tap.x - x, tap.y - y) < 25;
       if (tap && now - tap.t < 320 && sameSpot) {
-        if (state.measureTimer) {
-          window.clearTimeout(state.measureTimer);
-          state.measureTimer = null;
-        }
-        state.orbital.energy = clamp(state.orbital.energy + 0.4, 0, 1);
         state.orbital.type = state.orbital.type === "s" ? "p" : state.orbital.type === "p" ? "d" : "s";
-        state.photons.push({ t: now, life: 2.2, speed: 24, phase: 0 });
-        const hit = sampleOrbitalPoint();
-        state.flashes.push({ x: hit.x, y: hit.y, t: now });
+        rebuildParticles();
         state.tapPending = null;
       } else {
         const timer = window.setTimeout(() => {
           state.tapPending = null;
         }, 320);
         state.tapPending = { t: now, x, y, timer };
-        state.measureTimer = window.setTimeout(() => {
-          const hit = sampleOrbitalPoint();
-          state.flashes.push({ x: hit.x, y: hit.y, t: state.now });
-          state.orbital.collapse = Math.max(state.orbital.collapse, 0.6);
-        }, 320);
       }
       return;
     }
@@ -350,45 +234,31 @@
 
   function init(nextHost) {
     host = nextHost;
-    canvas = host.canvas;
     ctx = host.ctx;
-    initFieldBuffer();
-    setCenter();
+    setSize();
+    rebuildParticles();
   }
 
   function onResize(width, height) {
     state.width = width;
     state.height = height;
-    setCenter();
+    setSize();
   }
 
   function getSnapshot() {
     return {
       orbital: {
         type: state.orbital.type,
-        angle: state.orbital.angle,
-        energy: state.orbital.energy,
+        rot: state.orbital.targetRot,
       },
-      photons: state.photons.map((p) => ({ life: p.life, speed: p.speed, phase: p.phase })),
-      t: Date.now(),
     };
   }
 
   function loadSnapshot(snapshot) {
-    if (!snapshot) return;
-    if (snapshot.orbital) {
-      state.orbital.type = snapshot.orbital.type || "p";
-      state.orbital.angle = snapshot.orbital.angle || 0;
-      state.orbital.energy = snapshot.orbital.energy || 0.3;
-    }
-    if (Array.isArray(snapshot.photons)) {
-      state.photons = snapshot.photons.map((p) => ({
-        t: state.now,
-        life: p.life || 2,
-        speed: p.speed || 24,
-        phase: p.phase || 0,
-      }));
-    }
+    if (!snapshot || !snapshot.orbital) return;
+    state.orbital.type = snapshot.orbital.type || "p";
+    state.orbital.targetRot = snapshot.orbital.rot || { x: 0.2, y: 0.6, z: 0 };
+    rebuildParticles();
   }
 
   const world = {
