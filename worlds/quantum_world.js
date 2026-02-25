@@ -242,6 +242,9 @@
   function init(nextHost) {
     host = nextHost;
     ctx = host.ctx;
+    const rect = host.canvas.getBoundingClientRect();
+    state.width = rect.width;
+    state.height = rect.height;
     setSize();
     rebuildParticles();
   }
@@ -250,6 +253,7 @@
     state.width = width;
     state.height = height;
     setSize();
+    rebuildParticles();
   }
 
   function getSnapshot() {
@@ -274,6 +278,7 @@
     init,
     onEnter() {},
     onExit() {},
+    onResize,
     update,
     render,
     onPointer,
