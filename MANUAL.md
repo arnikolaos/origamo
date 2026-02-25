@@ -61,11 +61,20 @@ The shape you edit is not the drawn path; it drives the tracing machine.
 - Low stability adds subtle wrinkles that fade as balance returns.
 
 ## Quantum World Notes
+Quantum is a probabilistic orbital visualization. You are not moving a particle;
+you are changing the probability field that describes where the electron can appear.
+
+Controls
 - Hold to observe and collapse the orbital; release to let it spread.
-- Drag while holding to rotate the orbital.
-- Single tap triggers a measurement flash (particle-like event).
-- Double-tap cycles orbital type (s → p → d) and emits photon waves.
-- Gallery dots appear after coherence snaps; tap to restore.
+- Drag while holding to rotate the orbital in 3D.
+- Single tap performs a quick measurement.
+- Double-tap cycles orbital type: `s → p → d → s`.
+
+Behavior
+- The cloud is a particle sampling of the orbital probability density.
+- Collapse makes the cloud tighten; release restores the field.
+- Rotating reveals lobe structure and nodal regions.
+- Changing orbital type rebuilds the probability distribution.
 
 ## Tips
 - Try building symmetry slowly; the system rewards it with subtle cues.
